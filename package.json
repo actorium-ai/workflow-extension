@@ -1,0 +1,20 @@
+{
+  "name": "workflow-extension",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "shared"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces",
+    "format": "prettier --write '**/*.{ts,tsx,js,json,html,css}'",
+    "format:check": "prettier --check '**/*.{ts,tsx,js,json,html,css}'",
+    "lint": "npm run lint --workspaces",
+    "typecheck": "npm run typecheck --workspaces"
+  },
+  "devDependencies": {
+    "prettier": "^3.3.0",
+    "typescript": "^5.5.0"
+  }
+}
