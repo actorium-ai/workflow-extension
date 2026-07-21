@@ -1,0 +1,122 @@
+{
+  "name": "hermes-coding-vscode",
+  "displayName": "Hermes IDE Coding Agent",
+  "description": "Pair-programming agent embedded in VS Code — reads your code, edits via native editor APIs, runs commands in your terminal, and manages git.",
+  "version": "0.1.0",
+  "publisher": "nousresearch",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Chat",
+    "Programming Languages",
+    "Other"
+  ],
+  "keywords": [
+    "hermes",
+    "ai",
+    "coding",
+    "agent",
+    "pair-programming"
+  ],
+  "activationEvents": [
+    "onView:hermes.chatPanel"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "hermes",
+          "title": "Hermes",
+          "icon": "$(hubot)"
+        }
+      ]
+    },
+    "views": {
+      "hermes": [
+        {
+          "type": "webview",
+          "id": "hermes.chatPanel",
+          "name": "Chat"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "hermes.connect",
+        "title": "Hermes: Connect"
+      },
+      {
+        "command": "hermes.disconnect",
+        "title": "Hermes: Disconnect"
+      },
+      {
+        "command": "hermes.switchWorkspace",
+        "title": "Hermes: Switch Workspace"
+      },
+      {
+        "command": "hermes.setMode",
+        "title": "Hermes: Set Mode"
+      },
+      {
+        "command": "hermes.checkVersion",
+        "title": "Hermes: Check for Updates"
+      },
+      {
+        "command": "hermes.clearChat",
+        "title": "Hermes: Clear Chat"
+      }
+    ],
+    "configuration": {
+      "title": "Hermes IDE Coding Agent",
+      "properties": {
+        "hermes.userServiceUrl": {
+          "type": "string",
+          "default": "https://api.nousresearch.com",
+          "description": "Base URL for the user-service (OAuth device flow)"
+        },
+        "hermes.agentUrl": {
+          "type": "string",
+          "default": "https://agent.nousresearch.com",
+          "description": "Base URL for the hermes-agent coding endpoint"
+        },
+        "hermes.clientId": {
+          "type": "string",
+          "default": "hermes-vscode",
+          "description": "OAuth client ID for device flow"
+        },
+        "hermes.mode": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "plan",
+            "auto"
+          ],
+          "default": "ask",
+          "description": "Default operational mode: Ask (approve each change), Plan (read-only), Auto (automatic)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -watch -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --test dist/test/**/*.test.js",
+    "pretest": "npm run build",
+    "format": "prettier --write 'src/**/*.ts' 'webview/**/*.{html,css,js}' 'test/**/*.ts'",
+    "lint": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@workflow-extension/shared": "*"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.0",
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.5.0"
+  }
+}
