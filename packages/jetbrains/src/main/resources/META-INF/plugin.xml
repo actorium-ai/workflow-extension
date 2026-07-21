@@ -1,0 +1,59 @@
+<idea-plugin>
+    <id>com.hermes.ide</id>
+    <name>Hermes IDE Coding Agent</name>
+    <vendor email="hermes@nousresearch.com" url="https://nousresearch.com">Nous Research</vendor>
+
+    <description><![CDATA[
+        Pair-programming agent embedded in JetBrains IDEs — reads your code,
+        edits via native editor APIs, runs commands in your terminal, and
+        manages git.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>Git4Idea</depends>
+    <depends>org.jetbrains.plugins.terminal</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow
+            id="Hermes"
+            anchor="right"
+            icon="AllIcons.General.Modified"
+            factoryClass="com.hermes.ide.HermesToolWindowFactory" />
+        <statusBarWidgetFactory
+            id="hermesCredits"
+            implementation="com.hermes.ide.status.CreditsWidgetFactory" />
+    </extensions>
+
+    <application-components>
+        <component>
+            <implementation-class>com.hermes.ide.version.VersionChecker</implementation-class>
+        </component>
+    </application-components>
+
+    <project-components>
+        <component>
+            <implementation-class>com.hermes.ide.context.ContextGatherer</implementation-class>
+        </component>
+    </project-components>
+
+    <actions>
+        <action id="hermes.connect"
+                class="com.hermes.ide.auth.OAuthConnectAction"
+                text="Hermes: Connect"
+                description="Connect to Hermes via OAuth device flow" />
+        <action id="hermes.disconnect"
+                class="com.hermes.ide.auth.OAuthDisconnectAction"
+                text="Hermes: Disconnect"
+                description="Disconnect from Hermes" />
+        <action id="hermes.setMode"
+                class="com.hermes.ide.mode.SetModeAction"
+                text="Hermes: Set Mode"
+                description="Change operational mode (Ask/Plan/Auto)" />
+        <action id="hermes.checkVersion"
+                class="com.hermes.ide.version.CheckVersionAction"
+                text="Hermes: Check for Updates" />
+        <action id="hermes.clearChat"
+                class="com.hermes.ide.chat.ClearChatAction"
+                text="Hermes: Clear Chat" />
+    </actions>
+</idea-plugin>
