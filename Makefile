@@ -32,7 +32,7 @@ vscode-watch:
 	pnpm --filter actorium-vscode run watch
 
 vscode-package: vscode-build
-	pnpm --filter actorium-vscode exec vsce package --no-dependencies
+	pnpm --filter actorium-vscode exec vsce package --no-dependencies --allow-missing-repository
 
 vscode-run: vscode-build
 	code --extensionDevelopmentPath=$(CURDIR)/packages/vscode
