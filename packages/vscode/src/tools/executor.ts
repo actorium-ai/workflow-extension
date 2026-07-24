@@ -1,8 +1,9 @@
+import type { EditFileParams, ToolResultPayload } from '@workflow-extension/shared';
 import * as vscode from 'vscode';
+
 import { FileOps } from './files.js';
-import { TerminalOps } from './terminal.js';
 import { GitOps } from './git.js';
-import type { ToolResultPayload, EditFileParams } from '@workflow-extension/shared';
+import { TerminalOps } from './terminal.js';
 
 /**
  * Routes deferred tool calls from the agent to the correct executor.

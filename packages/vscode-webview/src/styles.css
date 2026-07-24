@@ -1,0 +1,128 @@
+@import 'tailwindcss';
+@import '@heroui/react/styles';
+@plugin '@tailwindcss/typography';
+
+/*
+ * Color tokens mirror digital-factory-ui's tailwind.config.ts naming
+ * (primary, surface, text-primary, border, chip-bg, ...) but each one
+ * resolves to a var(--vscode-*) token instead of a fixed hex value, so the
+ * panel always follows the user's actual VS Code color theme rather than a
+ * hardcoded brand palette. HeroUI's own internal theme (@heroui/react/styles)
+ * is left untouched — its components are restyled per-instance with these
+ * tokens instead, same as digital-factory-ui does.
+ */
+@theme {
+  --color-bg: var(--vscode-editor-background);
+  --color-surface: var(--vscode-input-background);
+  --color-surface-secondary: var(--vscode-list-hoverBackground, var(--vscode-button-hoverBackground));
+  --color-border: var(--vscode-panel-border);
+  --color-primary: var(--vscode-button-background);
+  --color-primary-hover: var(--vscode-button-hoverBackground);
+  --color-primary-foreground: var(--vscode-button-foreground);
+  --color-accent: var(--vscode-focusBorder);
+  --color-danger: var(--vscode-errorForeground);
+  --color-success: var(--vscode-charts-green, #3fb950);
+  --color-warning: var(--vscode-charts-orange, #d29922);
+  --color-purple: var(--vscode-charts-purple, #a371f7);
+  /* Lighter chip/link text on a bg-purple/15 tint — bg-purple text-purple has
+     too little value separation on a dark VS Code theme. No matching vscode-*
+     token exists for this (same reasoning as chip-bg/chip-fg below, which are
+     also fixed hex rather than theme-derived) — mirrors digital-factory-ui's
+     own --color-purple-light exactly (same hex). */
+  --color-purple-light: #c3b2f7;
+  /* Chip/link text tint — mirrors digital-factory-ui's --color-accent-foreground
+     (same hex; "Periwinkle"), used for mention/file chip text. Falls back to
+     the theme's own link color first since that's the closest semantic
+     vscode-* concept ("this text is a reference/link"), then the fixed hex. */
+  --color-accent-foreground: var(--vscode-textLink-foreground, #7fb8f7);
+  --color-text-primary: var(--vscode-editor-foreground);
+  --color-text-secondary: var(--vscode-descriptionForeground);
+  --color-text-muted: var(--vscode-descriptionForeground);
+  --color-code-bg: var(--vscode-textCodeBlock-background, rgba(127, 127, 127, 0.15));
+  --color-chip-bg: rgba(230, 161, 72, 0.16);
+  --color-chip-fg: #e6a148;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--vscode-font-family), serif;
+  font-size: var(--vscode-font-size);
+  color: var(--color-text-primary);
+  background: var(--color-bg);
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Markdown prose — same vscode-token colors piped into typography's own
+   custom properties, so `prose` output (headings/tables/code/links/...)
+   follows the editor theme without a separate light/dark variant. */
+.prose-chat {
+  --tw-prose-body: var(--color-text-primary);
+  --tw-prose-headings: var(--color-text-primary);
+  --tw-prose-lead: var(--color-text-secondary);
+  --tw-prose-links: var(--color-chip-fg);
+  --tw-prose-bold: var(--color-text-primary);
+  --tw-prose-counters: var(--color-text-secondary);
+  --tw-prose-bullets: var(--color-text-secondary);
+  --tw-prose-hr: var(--color-border);
+  --tw-prose-quotes: var(--color-text-secondary);
+  --tw-prose-quote-borders: var(--color-border);
+  --tw-prose-captions: var(--color-text-muted);
+  --tw-prose-code: var(--color-chip-fg);
+  --tw-prose-pre-code: var(--color-text-primary);
+  --tw-prose-pre-bg: var(--color-code-bg);
+  --tw-prose-th-borders: var(--color-border);
+  --tw-prose-td-borders: var(--color-border);
+  font-size: 0.92em;
+  line-height: 1.55;
+}
+.prose-chat :where(code):not(:where([class~='not-prose'] *))::before,
+.prose-chat :where(code):not(:where([class~='not-prose'] *))::after {
+  content: none;
+}
+.prose-chat :where(code):not(:where(pre code)) {
+  background: var(--color-code-bg);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-weight: 400;
+}
+.prose-chat pre {
+  background: var(--color-code-bg);
+  border-radius: 6px;
+}
+/* Chip visual styling (pill shape + per-kind color) now lives entirely in
+   utils/chip-styles.ts's CHIP_CLASS — Tailwind utility classes applied
+   directly by markdown.tsx's SpanRenderer and input-bar.tsx's composer,
+   mirroring digital-factory-ui's own chip-styles.ts exactly. `data-chip` is
+   still SET on every chip span (for DOM querying / kind identification)
+   but no longer STYLED via this attribute selector. */
+
+@keyframes chat-bounce {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.5;
+  }
+  30% {
+    transform: translateY(-3px);
+    opacity: 1;
+  }
+}
+.animate-chat-bounce {
+  animation: chat-bounce 1s infinite;
+}

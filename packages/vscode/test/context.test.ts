@@ -1,75 +1,46 @@
 /**
  * Unit tests for the IDE Context Gatherer's context shape validation.
  *
- * Tests that the context object has the correct shape with all required fields.
+ * Imports the real shared IDEContext type (rather than a local copy) so this
+ * test actually catches drift against hermes-agent's Pydantic model — every
+ * field here must be the exact type Python expects (see shared/types.ts's
+ * doc comment): git_status/diagnostics/selection are pre-formatted strings,
+ * not structured objects/arrays, and active_file/workspace_root/etc. are
+ * required non-nullable strings, not `string | null`.
  */
 
+import type { IDEContext } from '@workflow-extension/shared';
 import { deepStrictEqual, ok } from 'assert';
-
-// ── IDE Context types ──────────────────────────────────────────────────
-interface IDEContext {
-  active_file: string | null;
-  selection: {
-    start_line: number;
-    end_line: number;
-    text: string;
-  } | null;
-  open_files: string[];
-  workspace_root: string | null;
-  git_status: {
-    branch: string | null;
-    modified: string[];
-    staged: string[];
-    untracked: string[];
-    remote_url: string | null;
-  } | null;
-  diagnostics: Array<{
-    file: string;
-    line: number;
-    column: number;
-    severity: 'error' | 'warning' | 'info' | 'hint';
-    message: string;
-  }>;
-}
 
 // ── Helper: construct a minimal context ────────────────────────────────
 function createEmptyContext(): IDEContext {
   return {
-    active_file: null,
+    active_file: '',
+    active_file_language: '',
+    cursor_line: 0,
     selection: null,
     open_files: [],
-    workspace_root: null,
-    git_status: null,
-    diagnostics: [],
+    git_branch: '',
+    git_status: '',
+    diagnostics: '',
+    workspace_root: '',
   };
 }
 
 function createFullContext(): IDEContext {
   return {
     active_file: '/home/user/project/src/login.ts',
-    selection: {
-      start_line: 42,
-      end_line: 72,
-      text: 'function login(req) {\n  // TODO\n}',
-    },
-    open_files: ['/home/user/project/src/login.ts', '/home/user/project/src/auth.ts'],
-    workspace_root: '/home/user/project',
-    git_status: {
-      branch: 'feature/login-flow',
-      modified: ['src/login.ts'],
-      staged: [],
-      untracked: ['src/new-file.ts'],
-      remote_url: 'git@github.com:org/repo.git',
-    },
-    diagnostics: [
-      {
-        file: 'src/login.ts',
-        line: 45,
-        column: 10,
-        severity: 'error',
-        message: "Type 'string' is not assignable to type 'number'",
-      },
+    active_file_language: 'typescript',
+    cursor_line: 42,
+    selection: 'function login(req) {\n  // TODO\n}',
+    open_files: [
+      { path: '/home/user/project/src/login.ts', language: '', cursor_line: 0, selection: null },
+      { path: '/home/user/project/src/auth.ts', language: '', cursor_line: 0, selection: null },
     ],
+    git_branch: 'feature/login-flow',
+    git_status: 'Modified: src/login.ts\nUntracked: src/new-file.ts',
+    diagnostics: "line 45:10 [error] Type 'string' is not assignable to type 'number'",
+    workspace_root: '/home/user/project',
   };
 }
 
@@ -78,79 +49,65 @@ function createFullContext(): IDEContext {
 // Empty context has correct shape
 {
   const ctx = createEmptyContext();
-  deepStrictEqual(ctx.active_file, null);
+  deepStrictEqual(ctx.active_file, '');
   deepStrictEqual(ctx.selection, null);
   deepStrictEqual(ctx.open_files.length, 0);
-  deepStrictEqual(ctx.workspace_root, null);
-  deepStrictEqual(ctx.git_status, null);
-  deepStrictEqual(ctx.diagnostics.length, 0);
+  deepStrictEqual(ctx.workspace_root, '');
+  deepStrictEqual(ctx.git_status, '');
+  deepStrictEqual(ctx.diagnostics, '');
 }
 
 // Full context has all fields populated
 {
   const ctx = createFullContext();
 
-  ok(ctx.active_file !== null, 'active_file should be set');
+  ok(ctx.active_file !== '', 'active_file should be set');
   ok(ctx.selection !== null, 'selection should be set');
-  deepStrictEqual(ctx.selection!.start_line, 42);
-  deepStrictEqual(ctx.selection!.end_line, 72);
+  ok(ctx.selection!.includes('TODO'), 'selection should carry the selected text');
 
   ok(ctx.open_files.length > 0, 'open_files should have entries');
+  deepStrictEqual(typeof ctx.open_files[0]!.path, 'string');
 
-  ok(ctx.workspace_root !== null, 'workspace_root should be set');
+  ok(ctx.workspace_root !== '', 'workspace_root should be set');
 
-  ok(ctx.git_status !== null, 'git_status should be set');
-  deepStrictEqual(ctx.git_status!.branch, 'feature/login-flow');
-  deepStrictEqual(ctx.git_status!.modified.length, 1);
-  deepStrictEqual(ctx.git_status!.untracked.length, 1);
+  ok(ctx.git_branch !== '', 'git_branch should be set');
+  deepStrictEqual(ctx.git_branch, 'feature/login-flow');
+  ok(ctx.git_status.includes('Modified'), 'git_status should summarize modified files');
+  ok(ctx.git_status.includes('Untracked'), 'git_status should summarize untracked files');
 
-  ok(ctx.diagnostics.length > 0, 'diagnostics should have entries');
-  deepStrictEqual(ctx.diagnostics[0]!.severity, 'error');
+  ok(ctx.diagnostics.length > 0, 'diagnostics should be a non-empty summary');
+  ok(ctx.diagnostics.includes('error'), 'diagnostics should include severity label');
 }
 
-// Git status with no changes
+// Git status with no changes formats as an empty string, not an object
 {
   const ctx: IDEContext = {
-    active_file: null,
-    selection: null,
-    open_files: [],
-    workspace_root: null,
-    git_status: {
-      branch: 'main',
-      modified: [],
-      staged: [],
-      untracked: [],
-      remote_url: null,
-    },
-    diagnostics: [],
+    ...createEmptyContext(),
+    git_branch: 'main',
   };
 
-  deepStrictEqual(ctx.git_status!.modified.length, 0);
-  deepStrictEqual(ctx.git_status!.staged.length, 0);
-  deepStrictEqual(ctx.git_status!.untracked.length, 0);
+  deepStrictEqual(ctx.git_status, '');
+  deepStrictEqual(ctx.git_branch, 'main');
 }
 
-// Diagnostics with multiple severities
+// Diagnostics with multiple severities join into one string
 {
   const ctx: IDEContext = {
-    active_file: null,
-    selection: null,
-    open_files: [],
-    workspace_root: null,
-    git_status: null,
+    ...createEmptyContext(),
     diagnostics: [
-      { file: 'a.ts', line: 1, column: 1, severity: 'error', message: 'err' },
-      { file: 'a.ts', line: 2, column: 1, severity: 'warning', message: 'warn' },
-      { file: 'a.ts', line: 3, column: 1, severity: 'info', message: 'info' },
-      { file: 'a.ts', line: 4, column: 1, severity: 'hint', message: 'hint' },
-    ],
+      'line 1:1 [error] err',
+      'line 2:1 [warning] warn',
+      'line 3:1 [info] info',
+      'line 4:1 [hint] hint',
+    ].join('\n'),
   };
 
-  deepStrictEqual(ctx.diagnostics.length, 4);
-  deepStrictEqual(ctx.diagnostics[0]!.severity, 'error');
-  deepStrictEqual(ctx.diagnostics[1]!.severity, 'warning');
-  deepStrictEqual(ctx.diagnostics[2]!.severity, 'info');
-  deepStrictEqual(ctx.diagnostics[3]!.severity, 'hint');
+  const lines = ctx.diagnostics.split('\n');
+  deepStrictEqual(lines.length, 4);
+  ok(lines[0]!.includes('error'));
+  ok(lines[1]!.includes('warning'));
+  ok(lines[2]!.includes('info'));
+  ok(lines[3]!.includes('hint'));
 }
 
 console.log('✅ Context gatherer tests passed');

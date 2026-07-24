@@ -1,9 +1,34 @@
-import * as vscode from 'vscode';
+import type {
+  EditFileParams,
+  FileDiffStat,
+  FileEntry,
+  ToolResultPayload,
+} from '@workflow-extension/shared';
 import { execFile } from 'child_process';
+import { createPatch, diffLines } from 'diff';
 import { promisify } from 'util';
-import type { ToolResultPayload, FileEntry, EditFileParams } from '@workflow-extension/shared';
+import * as vscode from 'vscode';
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * Real added/removed line counts + a unified diff patch between two file
+ * contents — same approach opencode's backend uses (packages/opencode/src/
+ * tool/edit.ts: diffLines + summing each changed hunk's line count), just
+ * computed here in the IDE extension instead of a backend, since this is the
+ * only place with the actual before/after file content. The patch text lets
+ * the webview render a real colored diff view instead of a raw JSON dump.
+ */
+function computeDiffStat(path: string, before: string, after: string): FileDiffStat {
+  let additions = 0;
+  let deletions = 0;
+  for (const change of diffLines(before, after)) {
+    if (change.added) additions += change.count ?? 0;
+    if (change.removed) deletions += change.count ?? 0;
+  }
+  const patch = createPatch(path, before, after);
+  return { additions, deletions, patch };
+}
 
 /**
  * Execute file operation tools using VS Code native APIs.
@@ -36,6 +61,7 @@ export class FileOps {
       const fullPath = this._resolvePath(params.path);
       const uri = vscode.Uri.file(fullPath);
       const doc = await vscode.workspace.openTextDocument(uri);
+      const contentBefore = doc.getText();
 
       const edit = new vscode.WorkspaceEdit();
       let applied = false;
@@ -64,7 +90,8 @@ export class FileOps {
         const success = await vscode.workspace.applyEdit(edit);
         if (success) {
           await doc.save();
-          return { ok: true, applied: true };
+          const diff = computeDiffStat(params.path, contentBefore, doc.getText());
+          return { ok: true, applied: true, diff };
         }
         return { ok: false, applied: false, error: 'WorkspaceEdit.applyEdit returned false' };
       }
@@ -85,6 +112,13 @@ export class FileOps {
 
       // Ensure parent directory exists
       const parentDir = uri.with({ path: uri.path.substring(0, uri.path.lastIndexOf('/')) });
+      let contentBefore = '';
+      try {
+        const existing = await vscode.workspace.fs.readFile(uri);
+        contentBefore = Buffer.from(existing).toString('utf-8');
+      } catch {
+        // New file — no "before" content, i.e. a pure addition.
+      }
       try {
         await vscode.workspace.fs.stat(parentDir);
       } catch {
@@ -97,7 +131,8 @@ export class FileOps {
       const doc = await vscode.workspace.openTextDocument(uri);
       await vscode.window.showTextDocument(doc);
 
-      return { ok: true, applied: true, path };
+      const diff = computeDiffStat(path, contentBefore, content);
+      return { ok: true, applied: true, path, diff };
     } catch (err) {
       return { ok: false, applied: false, error: `Failed to write file: ${err}` };
     }

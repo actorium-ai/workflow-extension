@@ -1,15 +1,25 @@
-import * as vscode from 'vscode';
 import type {
+  ApprovalChoice,
   DeferredToolCall,
-  ToolResultPayload,
   OperationalMode,
+  ToolResultPayload,
 } from '@workflow-extension/shared';
+
 import type { ToolExecutor } from '../tools/executor.js';
+
+/** Resolved by the webview's inline approval card (see ChatPanelProvider.showApproval /
+ * extension.ts's onAnswerApproval wiring) — the extension-host-internal analogue of
+ * clarify's server-side wait, since Ask-mode enforcement never leaves the client. */
+export type RequestApproval = (
+  callId: string,
+  tool: string,
+  params: Record<string, unknown>,
+) => Promise<{ choice: ApprovalChoice; instructions?: string }>;
 
 /**
  * Mode gate — enforces Ask/Plan/Auto behaviour for tool execution.
  *
- * Ask:  Show diff card in chat, wait for user approval
+ * Ask:  Show an inline approval card in chat, wait for user response
  * Plan: Block all mutation tool calls
  * Auto: Execute immediately without approval
  *
@@ -17,6 +27,10 @@ import type { ToolExecutor } from '../tools/executor.js';
  */
 export class ModeGate {
   private _mode: OperationalMode = 'ask';
+
+  // "Yes, allow all edits this session" — bypasses Ask-mode prompting for
+  // mutation tools until the chat is cleared (see resetSessionApproval).
+  private _autoApproveSession = false;
 
   // Tool categories
   private readonly _mutationTools = new Set([
@@ -44,15 +58,25 @@ export class ModeGate {
   }
 
   /**
+   * Clear the "allow all edits this session" grant — called on New Chat,
+   * since the grant is scoped to a single conversation, not global.
+   */
+  resetSessionApproval(): void {
+    this._autoApproveSession = false;
+  }
+
+  /**
    * Handle a deferred tool call based on the current mode.
    *
    * Returns the result to send back to the agent.
-   * In Ask mode, returns a Promise that resolves when the user approves/rejects.
+   * In Ask mode, returns a Promise that resolves when the user responds to
+   * the inline approval card.
    */
   async handle(
     deferred: DeferredToolCall,
     mode: OperationalMode,
     executor: ToolExecutor,
+    requestApproval: RequestApproval,
   ): Promise<ToolResultPayload> {
     // `clarify` is always allowed regardless of mode
     if (deferred.tool === 'clarify') {
@@ -68,7 +92,7 @@ export class ModeGate {
         return executor.execute(deferred.tool, deferred.params);
 
       case 'ask':
-        return this._handleAsk(deferred, executor);
+        return this._handleAsk(deferred, executor, requestApproval);
 
       case 'plan':
         return this._handlePlan(deferred);
@@ -100,14 +124,13 @@ export class ModeGate {
   }
 
   /**
-   * Ask mode: show a confirmation dialog for mutation tools.
-   *
-   * For file edits, the diff card is rendered by the webview.
-   * Here we show a quick-pick confirmation as the VS Code-native approval UX.
+   * Ask mode: show an inline approval card (in chat) for mutation tools and
+   * wait for the user's response.
    */
   private async _handleAsk(
     deferred: DeferredToolCall,
     executor: ToolExecutor,
+    requestApproval: RequestApproval,
   ): Promise<ToolResultPayload> {
     const isMutation = this._mutationTools.has(deferred.tool);
 
@@ -116,18 +139,31 @@ export class ModeGate {
       return executor.execute(deferred.tool, deferred.params);
     }
 
-    // Build a human-readable summary of the action
-    const summary = this._formatToolSummary(deferred);
+    if (this._autoApproveSession) {
+      return executor.execute(deferred.tool, deferred.params);
+    }
 
-    const choice = await vscode.window.showInformationMessage(
-      `Hermes wants to ${summary}`,
-      { modal: false },
-      'Approve',
-      'Reject',
+    const { choice, instructions } = await requestApproval(
+      deferred.tool_call_id,
+      deferred.tool,
+      deferred.params,
     );
 
-    if (choice === 'Approve') {
+    if (choice === 'yes_all') {
+      this._autoApproveSession = true;
       return executor.execute(deferred.tool, deferred.params);
+    }
+
+    if (choice === 'yes') {
+      return executor.execute(deferred.tool, deferred.params);
+    }
+
+    if (choice === 'instructions' && instructions) {
+      return {
+        ok: false,
+        applied: false,
+        error: `User rejected this change and asked for something different instead: ${instructions}`,
+      };
     }
 
     return {
@@ -135,30 +171,5 @@ export class ModeGate {
       applied: false,
       error: 'User rejected the change.',
     };
-  }
-
-  /**
-   * Format a human-readable summary of the tool call for the approval dialog.
-   */
-  private _formatToolSummary(deferred: DeferredToolCall): string {
-    const params = deferred.params;
-    switch (deferred.tool) {
-      case 'edit_file':
-        return `edit "${params.path}" (${(params as { edits: unknown[] }).edits?.length ?? 0} edit(s))`;
-      case 'write_file':
-        return `write "${params.path}"`;
-      case 'create_directory':
-        return `create directory "${params.path}"`;
-      case 'run_command':
-        return `run: ${(params.command as string)?.substring(0, 80)}`;
-      case 'git_commit':
-        return `commit: "${params.message}"`;
-      case 'git_push':
-        return `push to remote`;
-      case 'git_checkout':
-        return `checkout "${params.ref}"`;
-      default:
-        return `${deferred.tool}`;
-    }
   }
 }

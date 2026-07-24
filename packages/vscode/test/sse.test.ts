@@ -1,112 +1,108 @@
 /**
- * Unit tests for the SSE client event parsing.
- *
- * Tests the SSE event type detection and parsing logic
- * in isolation from network I/O.
+ * Unit tests for parseSSEFrame — the pure SSE-frame-to-event mapping used by
+ * SseClient. Exercises the real function against the actual wire format
+ * hermes-agent's HermesSSETranslator emits (src/streaming/sse.py), not an
+ * invented shape.
  */
 
 import { deepStrictEqual } from 'assert';
 
-// ── SSE event types ────────────────────────────────────────────────────
-type SSEEvent =
-  | { type: 'chat.completion.chunk'; content: string }
-  | {
-      type: 'hermes.tool.deferred';
-      tool_call_id: string;
-      tool: string;
-      params: Record<string, unknown>;
-    }
-  | { type: 'hermes.tool.progress'; tool_call_id: string; status: string }
-  | { type: 'cost'; data: { balance: number; used: number } }
-  | { type: 'done' }
-  | { type: 'error'; error: string };
+import { parseSSEFrame } from '../src/chat/sse.js';
 
-// ── SSE parsing ────────────────────────────────────────────────────────
-function parseSSEEvent(data: string): SSEEvent | null {
-  if (!data || data === '[DONE]') {
-    return { type: 'done' };
-  }
-
-  try {
-    const parsed = JSON.parse(data) as SSEEvent;
-    return parsed;
-  } catch {
-    return null;
-  }
+// ── chat.completion.chunk (no `event:` line) ────────────────────────────
+{
+  const events = parseSSEFrame(undefined, {
+    id: 'chatcmpl-1',
+    object: 'chat.completion.chunk',
+    choices: [{ index: 0, delta: { content: 'Hello' }, finish_reason: null }],
+  });
+  deepStrictEqual(events, [{ kind: 'delta', text: 'Hello' }]);
 }
 
-// ── Tests ──────────────────────────────────────────────────────────────
-
-// chat.completion.chunk
+// A role-only or empty-delta frame yields no events.
 {
-  const event = parseSSEEvent('{"type":"chat.completion.chunk","content":"Hello"}');
-  deepStrictEqual(event?.type, 'chat.completion.chunk');
-  deepStrictEqual((event as { type: 'chat.completion.chunk'; content: string }).content, 'Hello');
+  const events = parseSSEFrame(undefined, {
+    object: 'chat.completion.chunk',
+    choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }],
+  });
+  deepStrictEqual(events, []);
 }
 
-// hermes.tool.deferred
+// finish_reason: "error" surfaces the sibling hermes.error message.
 {
-  const deferredData = JSON.stringify({
-    type: 'hermes.tool.deferred',
+  const events = parseSSEFrame(undefined, {
+    object: 'chat.completion.chunk',
+    choices: [{ index: 0, delta: {}, finish_reason: 'error' }],
+    hermes: { error: 'boom' },
+  });
+  deepStrictEqual(events, [{ kind: 'error', message: 'boom' }]);
+}
+
+// ── agent.reasoning ──────────────────────────────────────────────────────
+{
+  const events = parseSSEFrame('agent.reasoning', {
+    object: 'reasoning.delta',
+    content: 'thinking about it',
+  });
+  deepStrictEqual(events, [{ kind: 'reasoning', content: 'thinking about it' }]);
+}
+
+{
+  const events = parseSSEFrame('agent.reasoning', { object: 'reasoning.done' });
+  deepStrictEqual(events, [{ kind: 'reasoningDone' }]);
+}
+
+// ── hermes.tool.progress ─────────────────────────────────────────────────
+{
+  const events = parseSSEFrame('hermes.tool.progress', {
+    tool: 'edit_file',
+    toolCallId: 'call_xyz',
+    status: 'running',
+  });
+  deepStrictEqual(events, [{ kind: 'toolStart', callId: 'call_xyz', name: 'edit_file' }]);
+}
+
+{
+  const events = parseSSEFrame('hermes.tool.progress', {
+    tool: 'edit_file',
+    toolCallId: 'call_xyz',
+    status: 'completed',
+  });
+  deepStrictEqual(events, [{ kind: 'toolDone', callId: 'call_xyz', name: 'edit_file' }]);
+}
+
+// ── hermes.tool.deferred ─────────────────────────────────────────────────
+{
+  const events = parseSSEFrame('hermes.tool.deferred', {
     tool_call_id: 'call_abc123',
     tool: 'edit_file',
-    params: {
-      path: 'src/login.ts',
-      edits: [{ old_string: 'foo', new_string: 'bar' }],
+    params: { path: 'src/login.ts', edits: [{ old_string: 'foo', new_string: 'bar' }] },
+  });
+  deepStrictEqual(events, [
+    {
+      kind: 'deferred',
+      toolCallId: 'call_abc123',
+      tool: 'edit_file',
+      params: { path: 'src/login.ts', edits: [{ old_string: 'foo', new_string: 'bar' }] },
     },
-  });
-  const event = parseSSEEvent(deferredData);
-  deepStrictEqual(event?.type, 'hermes.tool.deferred');
-  const def = event as Extract<SSEEvent, { type: 'hermes.tool.deferred' }>;
-  deepStrictEqual(def.tool_call_id, 'call_abc123');
-  deepStrictEqual(def.tool, 'edit_file');
-  deepStrictEqual((def.params as { path: string }).path, 'src/login.ts');
+  ]);
 }
 
-// hermes.tool.progress
+// ── hermes.artifact.saved, hermes.session, and other unknown extension
+// events: ignored. hermes.session specifically: the new stateful /chat no
+// longer reports session_id back via SSE (the client always already knows
+// it, having created the session itself via POST /session before the first
+// turn — see SseClient._ensureSession) — so this event should never arrive
+// in practice, but if it somehow did, it must not be mistaken for something
+// else. ─────────────────────────────────────────────────────────────────
 {
-  const data = JSON.stringify({
-    type: 'hermes.tool.progress',
-    tool_call_id: 'call_xyz',
-    status: 'executing',
-  });
-  const event = parseSSEEvent(data);
-  deepStrictEqual(event?.type, 'hermes.tool.progress');
+  const events = parseSSEFrame('hermes.artifact.saved', { artifact: 'product_spec' });
+  deepStrictEqual(events, []);
 }
 
-// cost
 {
-  const data = JSON.stringify({
-    type: 'cost',
-    data: { balance: 5000, used: 123 },
-  });
-  const event = parseSSEEvent(data);
-  deepStrictEqual(event?.type, 'cost');
-}
-
-// [DONE] marker
-{
-  const event = parseSSEEvent('[DONE]');
-  deepStrictEqual(event?.type, 'done');
-}
-
-// Empty data
-{
-  const event = parseSSEEvent('');
-  deepStrictEqual(event?.type, 'done');
-}
-
-// Error event
-{
-  const data = JSON.stringify({ type: 'error', error: 'Something went wrong' });
-  const event = parseSSEEvent(data);
-  deepStrictEqual(event?.type, 'error');
-}
-
-// Invalid JSON (graceful)
-{
-  const event = parseSSEEvent('not json');
-  deepStrictEqual(event, null);
+  const events = parseSSEFrame('hermes.session', { session_id: 'abc-123' });
+  deepStrictEqual(events, []);
 }
 
 console.log('✅ SSE parsing tests passed');

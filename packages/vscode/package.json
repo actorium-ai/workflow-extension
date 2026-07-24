@@ -1,12 +1,12 @@
 {
-  "name": "hermes-coding-vscode",
-  "displayName": "Hermes IDE Coding Agent",
-  "description": "Pair-programming agent embedded in VS Code — reads your code, edits via native editor APIs, runs commands in your terminal, and manages git.",
+  "name": "actorium-vscode",
+  "displayName": "Actorium Agent",
+  "description": "Agent-native delivery system",
   "version": "0.1.0",
-  "publisher": "nousresearch",
+  "publisher": "actorium-ai",
   "license": "MIT",
   "engines": {
-    "vscode": "^1.90.0"
+    "vscode": "^1.106.0"
   },
   "categories": [
     "Chat",
@@ -14,109 +14,161 @@
     "Other"
   ],
   "keywords": [
-    "hermes",
+    "actorium",
     "ai",
     "coding",
     "agent",
     "pair-programming"
   ],
   "activationEvents": [
-    "onView:hermes.chatPanel"
+    "onView:actorium.navigatorPanel",
+    "onView:actorium.chatPanel",
+    "onUri"
   ],
-  "main": "./dist/extension.js",
+  "main": "./dist/src/extension.js",
   "contributes": {
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "hermes",
-          "title": "Hermes",
-          "icon": "$(hubot)"
+          "id": "actorium",
+          "title": "Actorium",
+          "icon": "media/icon.svg"
+        }
+      ],
+      "secondarySidebar": [
+        {
+          "id": "actorium-secondary",
+          "title": "Actorium",
+          "icon": "media/icon.svg"
         }
       ]
     },
     "views": {
-      "hermes": [
+      "actorium": [
         {
           "type": "webview",
-          "id": "hermes.chatPanel",
+          "id": "actorium.navigatorPanel",
+          "name": "Actorium"
+        }
+      ],
+      "actorium-secondary": [
+        {
+          "type": "webview",
+          "id": "actorium.chatPanel",
           "name": "Chat"
         }
       ]
     },
     "commands": [
       {
-        "command": "hermes.connect",
-        "title": "Hermes: Connect"
+        "command": "actorium.connect",
+        "title": "Actorium: Connect"
       },
       {
-        "command": "hermes.disconnect",
-        "title": "Hermes: Disconnect"
+        "command": "actorium.disconnect",
+        "title": "Actorium: Disconnect"
       },
       {
-        "command": "hermes.switchWorkspace",
-        "title": "Hermes: Switch Workspace"
+        "command": "actorium.switchWorkspace",
+        "title": "Actorium: Switch Workspace"
       },
       {
-        "command": "hermes.setMode",
-        "title": "Hermes: Set Mode"
+        "command": "actorium.setMode",
+        "title": "Actorium: Set Mode"
       },
       {
-        "command": "hermes.checkVersion",
-        "title": "Hermes: Check for Updates"
+        "command": "actorium.checkVersion",
+        "title": "Actorium: Check for Updates"
       },
       {
-        "command": "hermes.clearChat",
-        "title": "Hermes: Clear Chat"
+        "command": "actorium.clearChat",
+        "title": "Actorium: Clear Chat"
+      },
+      {
+        "command": "actorium.showAccountMenu",
+        "title": "Actorium: Account"
       }
     ],
+    "icons": {
+      "actorium-logo": {
+        "description": "Actorium logo",
+        "default": {
+          "fontPath": "media/actorium-icons.woff",
+          "fontCharacter": "\\E001"
+        }
+      }
+    },
     "configuration": {
-      "title": "Hermes IDE Coding Agent",
+      "title": "Actorium Agent",
       "properties": {
-        "hermes.userServiceUrl": {
+        "actorium.environment": {
           "type": "string",
-          "default": "https://api.nousresearch.com",
-          "description": "Base URL for the user-service (OAuth device flow)"
+          "enum": [
+            "production",
+            "abp",
+            "sw",
+            "local"
+          ],
+          "enumDescriptions": [
+            "Connect to Actorium Production",
+            "Connect to Actorium ABP",
+            "Connect to Actorium SW",
+            "For Actorium developers only"
+          ],
+          "default": "production",
+          "description": "Which Actorium server to connect to."
         },
-        "hermes.agentUrl": {
-          "type": "string",
-          "default": "https://agent.nousresearch.com",
-          "description": "Base URL for the hermes-agent coding endpoint"
-        },
-        "hermes.clientId": {
-          "type": "string",
-          "default": "hermes-vscode",
-          "description": "OAuth client ID for device flow"
-        },
-        "hermes.mode": {
+        "actorium.mode": {
           "type": "string",
           "enum": [
             "ask",
             "plan",
             "auto"
           ],
+          "enumDescriptions": [
+            "Ask before making any change",
+            "Only look around and suggest — never change anything",
+            "Make changes on its own, without asking first"
+          ],
           "default": "ask",
-          "description": "Default operational mode: Ask (approve each change), Plan (read-only), Auto (automatic)"
+          "description": "How much the agent checks with you before making changes."
         }
       }
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run build",
-    "build": "tsc -p tsconfig.json",
+    "vscode:prepublish": "pnpm run build && pnpm run bundle",
+    "build": "pnpm --filter @workflow-extension/vscode-webview run build && tsc -p tsconfig.json",
+    "bundle": "node scripts/bundle-extension.mjs",
     "watch": "tsc -watch -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "node --test dist/test/**/*.test.js",
-    "pretest": "npm run build",
-    "format": "prettier --write 'src/**/*.ts' 'webview/**/*.{html,css,js}' 'test/**/*.ts'",
-    "lint": "tsc --noEmit -p tsconfig.json"
+    "pretest": "pnpm run build",
+    "format": "prettier --write 'src/**/*.ts' 'test/**/*.ts'",
+    "lint": "eslint . --fix"
   },
   "dependencies": {
-    "@workflow-extension/shared": "*"
+    "@workflow-extension/shared": "workspace:*",
+    "diff": "^9.0.0"
   },
   "devDependencies": {
+    "@eslint/compat": "^2.1.0",
+    "@eslint/eslintrc": "^3.3.6",
+    "@eslint/js": "^10.0.1",
     "@types/mocha": "^10.0.0",
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.90.0",
+    "@typescript-eslint/eslint-plugin": "^8.65.0",
+    "@typescript-eslint/parser": "^8.65.0",
+    "esbuild": "0.28.1",
+    "eslint": "^10.7.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.6",
+    "eslint-plugin-simple-import-sort": "^14.0.0",
+    "globals": "^17.7.0",
+    "svg2ttf": "6.1.0",
+    "svgicons2svgfont": "16.0.0",
+    "ttf2woff": "3.0.0",
     "typescript": "^5.5.0"
   }
 }

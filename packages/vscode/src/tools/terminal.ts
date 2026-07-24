@@ -1,5 +1,7 @@
-import * as vscode from 'vscode';
+import { exec } from 'node:child_process';
+
 import type { ToolResultPayload } from '@workflow-extension/shared';
+import * as vscode from 'vscode';
 
 /**
  * Execute terminal commands using VS Code's integrated terminal API.
@@ -19,8 +21,7 @@ export class TerminalOps {
   async runCommand(command: string, cwd?: string): Promise<ToolResultPayload> {
     try {
       const execPromise = new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-        const cp = require('child_process') as typeof import('child_process');
-        cp.exec(
+        exec(
           command,
           {
             cwd: cwd ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
@@ -60,7 +61,7 @@ export class TerminalOps {
    */
   runInTerminal(command: string, name?: string): void {
     const terminal = vscode.window.createTerminal({
-      name: name ?? 'Hermes',
+      name: name ?? 'Actorium',
       cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
     });
     terminal.show();

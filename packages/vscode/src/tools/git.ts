@@ -1,5 +1,5 @@
-import * as vscode from 'vscode';
 import type { ToolResultPayload } from '@workflow-extension/shared';
+import * as vscode from 'vscode';
 
 interface GitRepository {
   state: {

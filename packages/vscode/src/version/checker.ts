@@ -1,20 +1,48 @@
+import type { VersionEntry, VersionInfo } from '@workflow-extension/shared';
 import * as vscode from 'vscode';
-import type { VersionInfo, VersionEntry } from '@workflow-extension/shared';
+
+import { getActoriumConfig } from '../config/environment.js';
 
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
-const NUDGE_SUPPRESS_KEY = 'hermes.versionNudgeSuppressedUntil';
+const NUDGE_SUPPRESS_KEY = 'actorium.versionNudgeSuppressedUntil';
 
 /**
- * Version checker — polls GET /api/v1/coding/version on activation and
- * every 6 hours. Enforces min_version (hard block) and recommended_version
- * (soft nudge with 24h suppress).
+ * Version checker — polls GET /extension/version on activation and every
+ * 6 hours. Enforces min_version (hard block) and recommended_version (soft
+ * nudge with 24h suppress).
+ *
+ * This is a BFF-native, unauthenticated endpoint (workflow-bff's
+ * internal/app/api/handler/extensionversion) — not hermes-agent, and not
+ * behind the /bff/<service> proxy prefix agentUrl uses, since it's public
+ * and called before the developer has even logged in.
  */
 export class VersionChecker {
   private _interval: NodeJS.Timeout | null = null;
   private readonly EXTENSION_VERSION: string;
+  private _onBlocked: ((entry: VersionEntry) => void) | null = null;
+  private _blockedEntry: VersionEntry | null = null;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.EXTENSION_VERSION = context.extension.packageJSON?.version ?? '0.1.0';
+  }
+
+  /**
+   * Registers a callback fired whenever a hard version block is detected
+   * (installed < min_version) — drives the webviews' own persistent,
+   * non-dismissible block overlay (see ChatPanelProvider/
+   * NavigatorPanelProvider.setVersionBlocked), separate from the native
+   * showErrorMessage notification below (which a user can just dismiss and
+   * keep using a blocked extension otherwise).
+   */
+  onBlocked(callback: (entry: VersionEntry) => void): void {
+    this._onBlocked = callback;
+  }
+
+  /** Last-known block state — read by extension.ts to sync a panel that
+   * resolves AFTER the check already ran (e.g. the secondary sidebar's chat
+   * view, opened later in the session). */
+  getBlockedEntry(): VersionEntry | null {
+    return this._blockedEntry;
   }
 
   /**
@@ -29,22 +57,17 @@ export class VersionChecker {
    * Check the version endpoint immediately.
    */
   async checkNow(): Promise<void> {
-    const config = vscode.workspace.getConfiguration('hermes');
-    const agentUrl = config.get<string>('agentUrl') ?? '';
-
-    if (!agentUrl) {
-      return;
-    }
+    const { bffUrl } = getActoriumConfig();
 
     try {
-      const resp = await fetch(`${agentUrl}/api/v1/coding/version`, {
+      const resp = await fetch(`${bffUrl}/extension/version`, {
         method: 'GET',
         headers: { Accept: 'application/json' },
         signal: AbortSignal.timeout(10_000),
       });
 
       if (!resp.ok) {
-        console.warn(`[hermes] Version check returned ${resp.status}`);
+        console.warn(`[actorium] Version check returned ${resp.status}`);
         return;
       }
 
@@ -52,7 +75,7 @@ export class VersionChecker {
       this._evaluate(versionInfo.vscode);
     } catch (err) {
       // Fail-open on network errors — just log and continue
-      console.warn('[hermes] Version check failed (fail-open):', err);
+      console.warn('[actorium] Version check failed (fail-open):', err);
     }
   }
 
@@ -85,8 +108,16 @@ export class VersionChecker {
    * Show a blocking banner — chat is disabled until update.
    */
   private async _showBlockingBanner(vscEntry: VersionEntry): Promise<void> {
+    this._blockedEntry = vscEntry;
+    vscode.commands.executeCommand('setContext', 'actorium.versionBlocked', true);
+    // Drives the actual UI block — a persistent overlay in both webviews
+    // that replaces the whole chat/navigator UI (composer included) until
+    // updated, since the notification below is just a dismissible toast a
+    // user can ignore and keep using an incompatible extension.
+    this._onBlocked?.(vscEntry);
+
     const action = await vscode.window.showErrorMessage(
-      `Hermes: This extension version (${this.EXTENSION_VERSION}) is no longer compatible with the backend (min: ${vscEntry.min_version}). Update to continue.`,
+      `Actorium: This extension version (${this.EXTENSION_VERSION}) is no longer compatible with the backend (min: ${vscEntry.min_version}). Update to continue.`,
       { modal: false },
       'Update',
     );
@@ -94,9 +125,6 @@ export class VersionChecker {
     if (action === 'Update') {
       vscode.env.openExternal(vscode.Uri.parse(vscEntry.marketplace_url));
     }
-
-    // Disable chat
-    vscode.commands.executeCommand('setContext', 'hermes.versionBlocked', true);
   }
 
   /**
@@ -104,7 +132,7 @@ export class VersionChecker {
    */
   private async _showUpdateNudge(vscEntry: VersionEntry): Promise<void> {
     const action = await vscode.window.showInformationMessage(
-      `Hermes v${vscEntry.recommended_version} is available (you have ${this.EXTENSION_VERSION}).`,
+      `Actorium v${vscEntry.recommended_version} is available (you have ${this.EXTENSION_VERSION}).`,
       'Update Now',
       'Later',
     );
