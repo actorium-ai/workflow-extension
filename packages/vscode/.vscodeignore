@@ -1,0 +1,13 @@
+# Everything the extension needs at runtime is bundled into
+# dist/src/extension.js by scripts/bundle-extension.mjs (see its comment for
+# why) — the raw TS source, tests, and the rest of tsc's scattered per-module
+# dist/src output are redundant in the packaged .vsix.
+src/**
+test/**
+scripts/**
+tsconfig.json
+eslint.config.mjs
+dist/test/**
+dist/src/**
+!dist/src/extension.js
+!dist/src/extension.js.map

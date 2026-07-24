@@ -1,0 +1,15 @@
+{
+  "name": "@workflow-extension/shared",
+  "version": "0.1.0",
+  "private": true,
+  "main": "types.ts",
+  "types": "types.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit",
+    "test": "echo 'No tests yet'"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  }
+}

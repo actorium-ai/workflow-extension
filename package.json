@@ -1,0 +1,16 @@
+{
+  "name": "workflow-extension",
+  "private": true,
+  "scripts": {
+    "build": "pnpm -r run build",
+    "test": "pnpm -r run test",
+    "format": "prettier --write '**/*.{ts,tsx,js,json,html,css}'",
+    "format:check": "prettier --check '**/*.{ts,tsx,js,json,html,css}'",
+    "lint": "pnpm -r run lint",
+    "typecheck": "pnpm -r run typecheck"
+  },
+  "devDependencies": {
+    "prettier": "^3.3.0",
+    "typescript": "^5.5.0"
+  }
+}

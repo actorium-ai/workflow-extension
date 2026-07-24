@@ -1,0 +1,175 @@
+{
+  "name": "actorium-vscode",
+  "displayName": "Actorium Agent",
+  "description": "Agent-native delivery system",
+  "version": "0.2.0",
+  "publisher": "actorium-ai",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "engines": {
+    "vscode": "^1.106.0"
+  },
+  "categories": [
+    "Chat",
+    "Programming Languages",
+    "Other"
+  ],
+  "keywords": [
+    "actorium",
+    "ai",
+    "coding",
+    "agent",
+    "pair-programming"
+  ],
+  "activationEvents": [
+    "onView:actorium.navigatorPanel",
+    "onView:actorium.chatPanel",
+    "onUri"
+  ],
+  "main": "./dist/src/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "actorium",
+          "title": "Actorium",
+          "icon": "media/icon.svg"
+        }
+      ],
+      "secondarySidebar": [
+        {
+          "id": "actorium-secondary",
+          "title": "Actorium",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "actorium": [
+        {
+          "type": "webview",
+          "id": "actorium.navigatorPanel",
+          "name": "Actorium"
+        }
+      ],
+      "actorium-secondary": [
+        {
+          "type": "webview",
+          "id": "actorium.chatPanel",
+          "name": "Chat"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "actorium.connect",
+        "title": "Actorium: Connect"
+      },
+      {
+        "command": "actorium.disconnect",
+        "title": "Actorium: Disconnect"
+      },
+      {
+        "command": "actorium.switchWorkspace",
+        "title": "Actorium: Switch Workspace"
+      },
+      {
+        "command": "actorium.setMode",
+        "title": "Actorium: Set Mode"
+      },
+      {
+        "command": "actorium.checkVersion",
+        "title": "Actorium: Check for Updates"
+      },
+      {
+        "command": "actorium.clearChat",
+        "title": "Actorium: Clear Chat"
+      },
+      {
+        "command": "actorium.showAccountMenu",
+        "title": "Actorium: Account"
+      }
+    ],
+    "icons": {
+      "actorium-logo": {
+        "description": "Actorium logo",
+        "default": {
+          "fontPath": "media/actorium-icons.woff",
+          "fontCharacter": "\\E001"
+        }
+      }
+    },
+    "configuration": {
+      "title": "Actorium Agent",
+      "properties": {
+        "actorium.environment": {
+          "type": "string",
+          "enum": [
+            "production",
+            "abp",
+            "sw",
+            "local"
+          ],
+          "enumDescriptions": [
+            "Connect to Actorium Production",
+            "Connect to Actorium ABP",
+            "Connect to Actorium SW",
+            "For Actorium developers only"
+          ],
+          "default": "production",
+          "description": "Which Actorium server to connect to."
+        },
+        "actorium.mode": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "plan",
+            "auto"
+          ],
+          "enumDescriptions": [
+            "Ask before making any change",
+            "Only look around and suggest — never change anything",
+            "Make changes on its own, without asking first"
+          ],
+          "default": "ask",
+          "description": "How much the agent checks with you before making changes."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "pnpm run build && pnpm run bundle",
+    "build": "pnpm --filter @workflow-extension/vscode-webview run build && tsc -p tsconfig.json",
+    "bundle": "node scripts/bundle-extension.mjs",
+    "watch": "tsc -watch -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --test dist/test/**/*.test.js",
+    "pretest": "pnpm run build",
+    "format": "prettier --write 'src/**/*.ts' 'test/**/*.ts'",
+    "lint": "eslint . --fix"
+  },
+  "dependencies": {
+    "@workflow-extension/shared": "workspace:*",
+    "diff": "^9.0.0"
+  },
+  "devDependencies": {
+    "@eslint/compat": "^2.1.0",
+    "@eslint/eslintrc": "^3.3.6",
+    "@eslint/js": "^10.0.1",
+    "@types/mocha": "^10.0.0",
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.90.0",
+    "@typescript-eslint/eslint-plugin": "^8.65.0",
+    "@typescript-eslint/parser": "^8.65.0",
+    "esbuild": "0.28.1",
+    "eslint": "^10.7.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.6",
+    "eslint-plugin-simple-import-sort": "^14.0.0",
+    "globals": "^17.7.0",
+    "svg2ttf": "6.1.0",
+    "svgicons2svgfont": "16.0.0",
+    "ttf2woff": "3.0.0",
+    "typescript": "^5.5.0"
+  }
+}
