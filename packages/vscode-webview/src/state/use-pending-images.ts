@@ -7,23 +7,27 @@ const vscode = getVsCodeApi();
 export interface PendingImage {
   localId: string;
   previewUrl: string;
+  /** Same bytes as previewUrl but as a `data:` URL, which (unlike a `blob:`
+   * object URL) survives being persisted via vscode.setState and rehydrated
+   * after a webview reload — this is what sent turns' imageUrls should use,
+   * not previewUrl. Set once the file's been read (well before 'done'/
+   * upload finishes), so it's always populated by the time a message can
+   * actually be sent. */
+  dataUrl?: string;
   status: 'uploading' | 'done' | 'error';
   imageId?: string;
 }
 
-/** Reads a File/Blob into a base64 string (stripping the "data:mime;base64,"
- * prefix) — the only way to hand pasted image bytes to the extension host,
- * since postMessage payloads must be JSON-serializable and the host (Node,
- * not a browser) has no createObjectURL/Blob-from-clipboard path of its
- * own. */
-function fileToBase64(file: File | Blob): Promise<string> {
+/** Reads a File/Blob into a `data:` URL — the only way to hand pasted image
+ * bytes to the extension host, since postMessage payloads must be
+ * JSON-serializable and the host (Node, not a browser) has no
+ * createObjectURL/Blob-from-clipboard path of its own. Also doubles as the
+ * persisted display source for sent turns (see PendingImage.dataUrl) since,
+ * unlike a blob: object URL, it survives a webview reload. */
+function fileToDataUrl(file: File | Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      const comma = result.indexOf(',');
-      resolve(comma === -1 ? result : result.slice(comma + 1));
-    };
+    reader.onload = () => resolve(reader.result as string);
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
   });
@@ -43,7 +47,10 @@ export function usePendingImages() {
     const localId = `img-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const previewUrl = URL.createObjectURL(file);
     setPendingImages((prev) => [...prev, { localId, previewUrl, status: 'uploading' }]);
-    void fileToBase64(file).then((dataBase64) => {
+    void fileToDataUrl(file).then((dataUrl) => {
+      setPendingImages((prev) => prev.map((p) => (p.localId === localId ? { ...p, dataUrl } : p)));
+      const comma = dataUrl.indexOf(',');
+      const dataBase64 = comma === -1 ? dataUrl : dataUrl.slice(comma + 1);
       vscode.postMessage({
         command: 'pasteImage',
         localId,
@@ -75,8 +82,12 @@ export function usePendingImages() {
     );
   }, []);
 
-  /** Clears all pending images (revoking their object URLs) — called after
-   * a successful send, mirroring digital-factory-ui's setPendingImages([]). */
+  /** Clears the pending-attachment strip after a successful send — mirrors
+   * digital-factory-ui's setPendingImages([]). Safe to revoke every
+   * previewUrl here: the just-sent user turn's imageUrls (see
+   * use-chat-controller.ts's sendMessage) uses each image's dataUrl as its
+   * display source, not previewUrl, so the sent bubble doesn't depend on
+   * these blob URLs staying alive. */
   const clear = useCallback(() => {
     setPendingImages((prev) => {
       prev.forEach((p) => URL.revokeObjectURL(p.previewUrl));

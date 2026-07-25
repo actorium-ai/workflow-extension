@@ -315,8 +315,9 @@ export class SseClient {
     context: IDEContext,
     onText: TextCallback,
     imageIds?: string[],
+    fileIds?: string[],
   ): Promise<void> {
-    await this._streamRequest(agentUrl, token, content, context, onText, imageIds);
+    await this._streamRequest(agentUrl, token, content, context, onText, imageIds, fileIds);
   }
 
   /**
@@ -410,6 +411,7 @@ export class SseClient {
     context: IDEContext,
     onText: TextCallback,
     imageIds?: string[],
+    fileIds?: string[],
   ): Promise<void> {
     const workspaceId = this.getWorkspaceId();
     if (!workspaceId) {
@@ -433,6 +435,7 @@ export class SseClient {
       workspace_id: workspaceId,
       model: this._model,
       image_ids: imageIds && imageIds.length > 0 ? imageIds : undefined,
+      file_ids: fileIds && fileIds.length > 0 ? fileIds : undefined,
       ide_context: context,
     };
 

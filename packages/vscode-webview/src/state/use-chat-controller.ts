@@ -17,6 +17,7 @@ import {
   turnsReducer,
 } from './turns-reducer.ts';
 import { useMentionState } from './use-mention-state.ts';
+import { usePendingFiles } from './use-pending-files.ts';
 import { usePendingImages } from './use-pending-images.ts';
 
 const vscode = getVsCodeApi();
@@ -47,9 +48,18 @@ export function useChatController() {
   const [versionBlocked, setVersionBlocked] = useState<VersionEntry | null>(null);
   const mentions = useMentionState();
   const images = usePendingImages();
+  const files = usePendingFiles();
 
   const currentTurnIdRef = useRef<string | null>(null);
-  const messageQueueRef = useRef<{ text: string; imageIds: string[] }[]>([]);
+  const messageQueueRef = useRef<
+    {
+      text: string;
+      imageIds: string[];
+      fileIds: string[];
+      imageUrls: string[];
+      fileUrls: Array<{ filename: string; sizeBytes: number; url?: string }>;
+    }[]
+  >([]);
 
   const ensureCurrentTurn = useCallback((): string => {
     if (!currentTurnIdRef.current) {
@@ -66,6 +76,25 @@ export function useChatController() {
   useEffect(() => {
     vscode.setState({ turns, mode });
   }, [turns, mode]);
+
+  // A turn restored from vscode.getState() carries whatever imageUrls were
+  // last embedded client-side — unlike a server-fetched sessionLoaded
+  // transcript (panel.ts's loadSessionIntoView), nothing has freshly
+  // re-derived them for THIS webview instance. Ask the host to re-resolve
+  // each restored image from its durable imageId (panel.ts's
+  // 'resolveImageUrls' case, same downloadImageAsDataUrl path
+  // loadSessionIntoView uses) rather than trust the embedded value still
+  // renders. Runs once, over whatever turns the mount-time reducer
+  // initializer restored — turns created afterward already get a live
+  // dataUrl at send time (use-pending-images.ts) and don't need this.
+  useEffect(() => {
+    for (const t of turns) {
+      if (t.role === 'user' && t.imageIds?.length) {
+        vscode.postMessage({ command: 'resolveImageUrls', turnId: t.id, imageIds: t.imageIds });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Bouncing-dot loader's elapsed-seconds counter, live only while busy.
   // The reset-to-0 on an isBusy transition happens during render (React's own
@@ -87,12 +116,28 @@ export function useChatController() {
   }, [isBusy]);
 
   const dispatchMessage = useCallback(
-    (text: string, imageIds: string[] = []) => {
-      dispatch({ type: 'addUser', id: nextTurnId('u'), text });
+    (
+      text: string,
+      imageIds: string[] = [],
+      fileIds: string[] = [],
+      imageUrls: string[] = [],
+      fileUrls: Array<{ filename: string; sizeBytes: number; url?: string }> = [],
+      skipUserTurn = false,
+    ) => {
+      if (!skipUserTurn) {
+        dispatch({
+          type: 'addUser',
+          id: nextTurnId('u'),
+          text,
+          imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
+          imageIds: imageIds.length > 0 ? imageIds : undefined,
+          fileUrls: fileUrls.length > 0 ? fileUrls : undefined,
+        });
+      }
       const assistantId = nextTurnId('a');
       currentTurnIdRef.current = assistantId;
       dispatch({ type: 'addAssistant', id: assistantId, now: Date.now() });
-      vscode.postMessage({ command: 'sendMessage', text, mode, imageIds });
+      vscode.postMessage({ command: 'sendMessage', text, mode, imageIds, fileIds });
     },
     [mode],
   );
@@ -103,23 +148,37 @@ export function useChatController() {
   const sendMessage = useCallback(() => {
     const text = inputValue.trim();
     const imageIds = images.doneImageIds;
-    if (!text && imageIds.length === 0) return;
-    // A pasted image still mid-upload has no imageId yet — sending now would
-    // silently drop it (doneImageIds only counts 'done' entries). Rare in
-    // practice (uploads are fast) but wrong to send around rather than wait
-    // for.
-    if (images.hasUploading) return;
+    const fileIds = files.doneFileIds;
+    if (!text && imageIds.length === 0 && fileIds.length === 0) return;
+    // A pasted image/attached file still mid-upload has no id yet — sending
+    // now would silently drop it (doneImageIds/doneFileIds only count 'done'
+    // entries). Rare in practice (uploads are fast) but wrong to send around
+    // rather than wait for.
+    if (images.hasUploading || files.hasUploading) return;
+    const imageUrls = images.pendingImages
+      .filter((img) => img.status === 'done')
+      .map((img) => img.dataUrl ?? img.previewUrl);
+    const fileUrls = files.doneFiles.map((f) => ({ filename: f.name, sizeBytes: f.size }));
     setInputValue('');
     mentions.closeMentionDropdown();
     images.clear();
+    files.clear();
 
     if (isBusy) {
-      messageQueueRef.current.push({ text, imageIds });
-      dispatch({ type: 'addUser', id: nextTurnId('u'), text, queued: true });
+      messageQueueRef.current.push({ text, imageIds, fileIds, imageUrls, fileUrls });
+      dispatch({
+        type: 'addUser',
+        id: nextTurnId('u'),
+        text,
+        queued: true,
+        imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
+        imageIds: imageIds.length > 0 ? imageIds : undefined,
+        fileUrls: fileUrls.length > 0 ? fileUrls : undefined,
+      });
       return;
     }
-    dispatchMessage(text, imageIds);
-  }, [inputValue, isBusy, dispatchMessage, mentions, images]);
+    dispatchMessage(text, imageIds, fileIds, imageUrls, fileUrls);
+  }, [inputValue, isBusy, dispatchMessage, mentions, images, files]);
 
   // The send button doubles as a stop button while busy: an empty input
   // means "stop the current turn"; non-empty input still queues via
@@ -232,7 +291,7 @@ export function useChatController() {
             if (messageQueueRef.current.length > 0) {
               const next = messageQueueRef.current.shift()!;
               dispatch({ type: 'dequeueUser' });
-              dispatchMessage(next.text, next.imageIds);
+              dispatchMessage(next.text, next.imageIds, next.fileIds, [], [], true);
             }
           }
           break;
@@ -345,8 +404,20 @@ export function useChatController() {
           images.markUploaded(msg.localId, msg.imageId);
           break;
 
+        case 'imageUrlsResolved':
+          dispatch({ type: 'setImageUrls', turnId: msg.turnId, imageUrls: msg.imageUrls || [] });
+          break;
+
         case 'imageUploadFailed':
           images.markFailed(msg.localId);
+          break;
+
+        case 'fileUploaded':
+          files.markUploaded(msg.localId, msg.fileId);
+          break;
+
+        case 'fileUploadFailed':
+          files.markFailed(msg.localId);
           break;
 
         case 'versionBlocked':
@@ -354,7 +425,7 @@ export function useChatController() {
           break;
       }
     },
-    [ensureCurrentTurn, dispatchMessage, mentions, images, requestFeatureNames],
+    [ensureCurrentTurn, dispatchMessage, mentions, images, files, requestFeatureNames],
   );
 
   useEffect(() => {
@@ -385,6 +456,9 @@ export function useChatController() {
     pendingImages: images.pendingImages,
     addPendingImage: images.addImage,
     removePendingImage: images.removeImage,
+    pendingFiles: files.pendingFiles,
+    addPendingFile: files.addFile,
+    removePendingFile: files.removeFile,
     dropFiles,
     slashCommands,
     requestSlashCommands,

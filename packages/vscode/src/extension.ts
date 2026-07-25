@@ -83,7 +83,7 @@ async function loadSessionIntoChat(sessionId: string): Promise<void> {
   );
   if (!messages) return;
   sseClient.setSessionId(sessionId);
-  chatPanelProvider?.loadSessionIntoView(sessionId, messages);
+  await chatPanelProvider?.loadSessionIntoView(sessionId, messages);
   vscode.commands.executeCommand('actorium.chatPanel.focus');
 }
 
@@ -286,7 +286,7 @@ export function activate(context: vscode.ExtensionContext): void {
   chatPanelProvider = new ChatPanelProvider(
     context,
     modeGate,
-    async (message: string, imageIds?: string[]) => {
+    async (message: string, imageIds?: string[], fileIds?: string[]) => {
       // Defense in depth — the webview's own persistent block overlay
       // (setVersionBlocked) already prevents reaching this via the UI, but
       // guard the actual send path too in case a stale/already-open webview
@@ -315,6 +315,7 @@ export function activate(context: vscode.ExtensionContext): void {
           ideContext,
           (text) => chatPanelProvider?.appendText(text),
           imageIds,
+          fileIds,
         );
       } catch (err) {
         chatPanelProvider?.appendText(

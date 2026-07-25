@@ -5,9 +5,21 @@ import {
   type MentionTagKind,
   OPEN_MENTION_TAG_PATTERN,
 } from '@workflow-extension/shared';
-import { AtSign, FileCode2, ImagePlus, Loader2, Send, Square, SquareSlash, X } from 'lucide-react';
+import {
+  AtSign,
+  File as FileIcon,
+  FileCode2,
+  ImagePlus,
+  Loader2,
+  Paperclip,
+  Send,
+  Square,
+  SquareSlash,
+  X,
+} from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
+import type { PendingFile } from '../state/use-pending-files.ts';
 import type { PendingImage } from '../state/use-pending-images.ts';
 import { CHIP_CLASS, CHIP_KIND_FOR_TAG, chipDisplayText } from '../utils/chip-styles.tsx';
 import type {
@@ -33,6 +45,9 @@ interface InputBarProps {
   pendingImages: PendingImage[];
   onImagePaste: (file: File | Blob) => void;
   onImageRemove: (localId: string) => void;
+  pendingFiles: PendingFile[];
+  onFileAttach: (file: File) => void;
+  onFileRemove: (localId: string) => void;
   onDropFiles: (uris: string[]) => void;
   slashCommands: { name: string; hint: string }[];
   onRequestSlashCommands: () => void;
@@ -90,6 +105,56 @@ function PendingImageStrip({
   );
 }
 
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Chip strip for non-image files attached to the pending message — mirrors
+ * PendingImageStrip's shape, but shows a filename/size chip instead of a
+ * thumbnail (a generic file has nothing to preview). */
+function PendingFileStrip({
+  files,
+  onRemove,
+}: {
+  files: PendingFile[];
+  onRemove: (localId: string) => void;
+}) {
+  if (files.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-2 border-b border-border/50 p-2">
+      {files.map((f) => (
+        <div
+          key={f.localId}
+          className={
+            'flex items-center gap-1.5 rounded-md border border-border bg-surface-secondary px-2 py-1 text-[11px] text-text-primary' +
+            (f.status === 'error' ? ' border-danger/60 text-danger' : '')
+          }
+        >
+          {f.status === 'uploading' ? (
+            <Loader2 className="h-3 w-3 shrink-0 animate-spin" aria-hidden="true" />
+          ) : (
+            <FileIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
+          )}
+          <span className="max-w-[10rem] truncate">{f.name}</span>
+          <span className="shrink-0 text-text-muted">
+            {f.status === 'error' ? 'Failed' : formatFileSize(f.size)}
+          </span>
+          <button
+            type="button"
+            onClick={() => onRemove(f.localId)}
+            className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-surface-subtle hover:text-text-primary"
+            aria-label={`Remove ${f.name}`}
+          >
+            <X className="h-2.5 w-2.5" aria-hidden="true" />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function sectionHeaderItem(id: string, label: string) {
   return (
     <Dropdown.Item
@@ -116,18 +181,21 @@ const ITEM_CLASS =
  * inserts the `<cmd:name>` tag directly. */
 function ActionsMenu({
   onAttachImage,
+  onAttachFile,
   onMentionFile,
   onSelectCommand,
   slashCommands,
   onRequestSlashCommands,
 }: {
   onAttachImage: (file: File) => void;
+  onAttachFile: (file: File) => void;
   onMentionFile: () => void;
   onSelectCommand: (command: string) => void;
   slashCommands: { name: string; hint: string }[];
   onRequestSlashCommands: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const requestedRef = useRef(false);
   return (
     <>
@@ -153,6 +221,7 @@ function ActionsMenu({
             onAction={(key) => {
               const id = String(key);
               if (id === 'attach-image') inputRef.current?.click();
+              else if (id === 'attach-file') fileInputRef.current?.click();
               else if (id === 'mention-file') onMentionFile();
               else if (id.startsWith(COMMAND_ITEM_PREFIX))
                 onSelectCommand(id.slice(COMMAND_ITEM_PREFIX.length));
@@ -169,6 +238,15 @@ function ActionsMenu({
               >
                 <ImagePlus className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                 Attach image
+              </Dropdown.Item>,
+              <Dropdown.Item
+                key="attach-file"
+                id="attach-file"
+                textValue="Attach file"
+                className={ITEM_CLASS}
+              >
+                <Paperclip className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                Attach file
               </Dropdown.Item>,
               <Dropdown.Item
                 key="mention-file"
@@ -212,6 +290,16 @@ function ActionsMenu({
         onChange={(e) => {
           const file = e.target.files?.[0];
           if (file) onAttachImage(file);
+          e.target.value = '';
+        }}
+      />
+      <input
+        ref={fileInputRef}
+        type="file"
+        hidden
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) onAttachFile(file);
           e.target.value = '';
         }}
       />
@@ -279,7 +367,12 @@ function buildChipNode(tag: string, tagValue: string, token: string): HTMLSpanEl
   span.dataset.chip = kind;
   span.className = CHIP_CLASS[kind];
   span.setAttribute(CHIP_TAG_ATTR, token);
-  span.textContent = chipDisplayText(tag as MentionTagKind, tagValue);
+  const displayText = chipDisplayText(tag as MentionTagKind, tagValue);
+  span.textContent = displayText;
+  // The chip's own max-w-[90%] truncate (chip-styles.ts) can now clip a long
+  // path — a title tooltip keeps the full text reachable on hover instead of
+  // it being lost to the ellipsis.
+  span.title = displayText;
   return span;
 }
 
@@ -424,6 +517,9 @@ export function InputBar({
   pendingImages,
   onImagePaste,
   onImageRemove,
+  pendingFiles,
+  onFileAttach,
+  onFileRemove,
   onDropFiles,
   slashCommands,
   onRequestSlashCommands,
@@ -734,6 +830,7 @@ export function InputBar({
       >
         <ActiveContextChip context={activeContext} />
         <PendingImageStrip images={pendingImages} onRemove={onImageRemove} />
+        <PendingFileStrip files={pendingFiles} onRemove={onFileRemove} />
         <div className="relative">
           <div
             ref={rootRef}
@@ -752,7 +849,7 @@ export function InputBar({
               isComposingRef.current = false;
               handleInput();
             }}
-            className="block max-h-[200px] min-h-9 w-full whitespace-pre-wrap break-words bg-transparent px-3 py-2 text-sm text-text-primary outline-none empty:before:text-text-muted empty:before:content-[attr(data-placeholder)]"
+            className="block max-h-[200px] min-h-9 w-full overflow-y-auto whitespace-pre-wrap break-words bg-transparent px-3 py-2 text-sm text-text-primary outline-none empty:before:text-text-muted empty:before:content-[attr(data-placeholder)]"
           />
           <MentionDropdown
             items={mentionItems}
@@ -771,6 +868,7 @@ export function InputBar({
             <ModeSelect mode={mode} onSetMode={onSetMode} />
             <ActionsMenu
               onAttachImage={onImagePaste}
+              onAttachFile={onFileAttach}
               onMentionFile={handleMentionFileClick}
               onSelectCommand={handleSelectCommand}
               slashCommands={slashCommands}

@@ -29,9 +29,17 @@ export const CHIP_KIND_FOR_TAG: Record<MentionTagKind, ChipKind> = {
 // All five kinds share the same pill SHAPE (inline-flex, fixed 18px height,
 // rounded, no-underline, hover feedback) so a message reads as one coherent
 // chip language — only the color (and command/localfile's monospace, since
-// tool names and paths read better in code font) differs per kind.
+// tool names and paths read better in code font) differs per kind. A chip
+// is a single atomic token (contenteditable="false" where it's editable) —
+// it can never wrap internally the way ordinary text can, so a long file
+// path (e.g. `src/services/user-service/index.ts`) needs its own max-width
+// + truncate or it just runs past the composer/bubble's edge once the panel
+// is narrower than the path is wide. `max-w-[90%]` (not a fixed px cap) so
+// it scales with whatever container it's in — the composer, a chat bubble,
+// a session-list row — instead of still overflowing a container narrower
+// than a fixed cap would assume.
 const CHIP_BASE =
-  'inline-flex h-[18px] items-center gap-1 whitespace-nowrap rounded px-1 text-[12px] font-semibold leading-none no-underline transition-colors align-middle';
+  'inline-flex h-[18px] max-w-[90%] items-center gap-1 truncate whitespace-nowrap rounded px-1 text-[12px] font-semibold leading-none no-underline transition-colors align-middle';
 
 export const CHIP_CLASS: Record<ChipKind, string> = {
   mention: `${CHIP_BASE} bg-primary/15 text-accent-foreground hover:bg-primary hover:text-white`,

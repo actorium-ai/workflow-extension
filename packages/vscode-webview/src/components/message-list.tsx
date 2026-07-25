@@ -1,3 +1,4 @@
+import { File as FileIcon } from 'lucide-react';
 import { useLayoutEffect, useRef } from 'react';
 
 import { applyLeadingCommandTag } from '../utils/remark-mention-chips.ts';
@@ -9,6 +10,12 @@ import { ClarifyPrompt } from './clarify-prompt';
 import { Markdown } from './markdown';
 import { ThinkingDisclosure } from './thinking-disclosure';
 import { ToolCallRow } from './tool-calls';
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 const STARTER_PROMPTS = [
   'Explain what this file does',
@@ -96,7 +103,9 @@ export function MessageList({
   // server-side) shouldn't count as "there's a conversation here" and
   // suppress the welcome/starter-prompt state.
   const hasVisibleContent = turns.some((turn) =>
-    turn.role === 'user' ? !!turn.text.trim() : !!turn.thinking || turn.segments.length > 0,
+    turn.role === 'user'
+      ? !!turn.text.trim() || (turn.imageUrls?.length ?? 0) > 0 || (turn.fileUrls?.length ?? 0) > 0
+      : !!turn.thinking || turn.segments.length > 0,
   );
 
   if (!hasVisibleContent && !isBusy) {
@@ -115,7 +124,9 @@ export function MessageList({
     >
       {turns.map((turn) => {
         if (turn.role === 'user') {
-          if (!turn.text.trim()) return null;
+          const hasImages = (turn.imageUrls?.length ?? 0) > 0;
+          const hasFiles = (turn.fileUrls?.length ?? 0) > 0;
+          if (!turn.text.trim() && !hasImages && !hasFiles) return null;
           return (
             <div className="flex flex-col items-end" key={turn.id}>
               <div
@@ -124,7 +135,39 @@ export function MessageList({
                   (turn.queued ? ' opacity-55' : '')
                 }
               >
-                <Markdown text={applyLeadingCommandTag(turn.text)} />
+                {hasImages && (
+                  <div className="mb-1.5 flex flex-wrap gap-1.5">
+                    {turn.imageUrls!.map((url, i) => (
+                      <img
+                        key={`${turn.id}-img-${i}`}
+                        src={url}
+                        alt=""
+                        className="h-24 w-24 rounded border border-border/50 object-cover"
+                      />
+                    ))}
+                  </div>
+                )}
+                {hasFiles && (
+                  <div className="mb-1.5 flex flex-wrap gap-1.5">
+                    {turn.fileUrls!.map((f, i) => (
+                      <div
+                        key={`${turn.id}-file-${i}`}
+                        className="flex items-center gap-1.5 rounded-md border border-border/60 bg-surface-secondary/60 px-2 py-1 text-[11px] text-text-primary"
+                      >
+                        <FileIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
+                        <span className="max-w-[10rem] truncate">
+                          {f.filename || 'Attached file'}
+                        </span>
+                        {f.sizeBytes > 0 && (
+                          <span className="shrink-0 text-text-muted">
+                            {formatFileSize(f.sizeBytes)}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {turn.text.trim() && <Markdown text={applyLeadingCommandTag(turn.text)} />}
                 {turn.queued && (
                   <span className="mt-0.5 block text-[10px] italic opacity-85">
                     Queued — sends after the current turn

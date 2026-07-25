@@ -106,8 +106,11 @@ export function ModelPicker({ models, selectedId, onSelect }: ModelPickerProps) 
             slots?.value())) — that slot's own font-size wins on this exact
             node regardless of what's set on the outer Select.Trigger above,
             since font-size doesn't cascade past a child's own explicit rule.
-            The size utility has to live here, not on the Trigger. */}
-        <Select.Value className="truncate text-[10.5px]!">
+            The size utility has to live here, not on the Trigger. Hidden
+            below ~340px of panel width — the provider icon + chevron alone
+            still identify and operate the picker — so a long model name
+            can't push the composer's toolbar row wider than the panel. */}
+        <Select.Value className="truncate text-[10.5px]! max-[340px]:hidden">
           {({ selectedText, isPlaceholder }: { selectedText: string; isPlaceholder: boolean }) =>
             isPlaceholder ? 'Model' : selectedText
           }

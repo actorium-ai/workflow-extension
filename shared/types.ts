@@ -186,6 +186,10 @@ export interface ChatTurnRequest {
   feature_id?: string;
   model?: string;
   image_ids?: string[];
+  /** IDs of files uploaded to storage-service's files bucket (see
+   * coding-api.ts's uploadFile) — already accepted end-to-end server-side
+   * (StreamChatRequest.file_ids), mirroring image_ids. */
+  file_ids?: string[];
   ide_context?: IDEContext;
 }
 
@@ -384,6 +388,13 @@ export interface SessionMessage {
   content: string | null;
   reasoning?: string | null;
   created_at: number;
+  /** BFF-relative fetch URLs for images attached to this message (hermes-agent's
+   * sessions.py attaches these when the stored row has image_ids). */
+  image_urls?: string[];
+  /** Files attached to this message — URL plus display metadata (blank
+   * filename/0 sizeBytes for a message sent before file_meta support existed
+   * client-side, since hermes-agent has nothing to backfill from). */
+  file_urls?: Array<{ url: string; filename: string; sizeBytes: number }>;
 }
 
 // ── Workspace detail / features (IDE) ──────────────────────────────────────

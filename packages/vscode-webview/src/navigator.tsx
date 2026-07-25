@@ -50,7 +50,12 @@ export function Navigator() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-3">
+      {/* Stays on one line by design — WorkspacePill (header.tsx) already
+          collapses its org half away below 300px, and the New session
+          button drops its text label below 280px, so both sides shrink
+          enough to fit together before flex-wrap would ever need to kick
+          in. Wrapping to a second line reads worse than either collapse. */}
+      <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-3">
         <WorkspacePill workspaceLabel={c.workspaceLabel} onSwitchWorkspace={c.switchWorkspace} />
         <div className="flex shrink-0 items-center gap-2">
           <button
@@ -58,8 +63,11 @@ export function Navigator() {
             title="New session"
             onClick={c.newChat}
           >
-            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-            New session
+            <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            {/* Hidden rather than removed below ~280px of panel width — the
+                icon + title tooltip alone still make the action discoverable,
+                same pattern VS Code's own narrow toolbars use. */}
+            <span className="max-[280px]:hidden">New session</span>
           </button>
           <UserMenu
             profile={c.userProfile}

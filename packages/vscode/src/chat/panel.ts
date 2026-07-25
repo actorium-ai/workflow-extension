@@ -18,8 +18,10 @@ import { buildWebviewHtml } from '../webview-html.js';
 import {
   codingApiConfig,
   type CodingApiContext,
+  downloadImageAsDataUrl,
   listFeatures,
   listTools,
+  uploadFile,
   uploadImage,
 } from './coding-api';
 import { buildMentionItems, resolveMentions } from './mentions.js';
@@ -95,7 +97,11 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly modeGate: ModeGate,
-    private readonly onSendMessage: (message: string, imageIds?: string[]) => Promise<void>,
+    private readonly onSendMessage: (
+      message: string,
+      imageIds?: string[],
+      fileIds?: string[],
+    ) => Promise<void>,
     private readonly onStopTurn: () => void,
     private readonly onModelChange: (modelId: string) => void,
     private readonly codingApiCtx: CodingApiContext,
@@ -125,6 +131,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           await this.onSendMessage(
             await resolveMentions(message.text, this.codingApiCtx),
             message.imageIds,
+            message.fileIds,
           );
           break;
 
@@ -142,6 +149,48 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
             imageId
               ? { command: 'imageUploaded', localId: message.localId, imageId }
               : { command: 'imageUploadFailed', localId: message.localId },
+          );
+          break;
+        }
+
+        case 'resolveImageUrls': {
+          // A turn restored from the webview's OWN vscode.getState() (as
+          // opposed to a server-fetched sessionLoaded transcript, which
+          // loadSessionIntoView below already resolves fresh) — re-derive
+          // its imageUrls from the durable imageId rather than trust
+          // whatever data: URL was last embedded client-side.
+          const workspaceId = this.codingApiCtx.getWorkspaceId();
+          const imageUrls = workspaceId
+            ? (
+                await Promise.all(
+                  (message.imageIds as string[]).map((id: string) =>
+                    downloadImageAsDataUrl(
+                      codingApiConfig(this.codingApiCtx),
+                      `/api/workspaces/${workspaceId}/images/${id}`,
+                    ),
+                  ),
+                )
+              ).filter((u): u is string => !!u)
+            : [];
+          this._postMessage({ command: 'imageUrlsResolved', turnId: message.turnId, imageUrls });
+          break;
+        }
+
+        case 'attachFile': {
+          const workspaceId = this.codingApiCtx.getWorkspaceId();
+          const fileId = workspaceId
+            ? await uploadFile(
+                codingApiConfig(this.codingApiCtx),
+                workspaceId,
+                Buffer.from(message.dataBase64, 'base64'),
+                message.filename,
+                message.mimeType,
+              )
+            : null;
+          this._postMessage(
+            fileId
+              ? { command: 'fileUploaded', localId: message.localId, fileId }
+              : { command: 'fileUploadFailed', localId: message.localId },
           );
           break;
         }
@@ -460,26 +509,47 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
    * extension.ts's loadSessionIntoChat) rather than by this panel's own
    * message switch — session management lives entirely in the navigator now.
    */
-  loadSessionIntoView(sessionId: string, messages: SessionMessage[]): void {
+  async loadSessionIntoView(sessionId: string, messages: SessionMessage[]): Promise<void> {
+    const filtered = messages.filter((m) => m.role === 'user' || m.role === 'assistant');
+
+    // Resolve each user message's image_urls (BFF-relative paths) to data:
+    // URLs up front — the webview itself can't attach the bearer token a
+    // plain <img src> request would need (see downloadImageAsDataUrl).
+    // File attachments don't need this: they render as an informational
+    // filename/size chip, not a fetched thumbnail.
+    const imageDataUrlsByMessage = await Promise.all(
+      filtered.map(async (m) => {
+        if (m.role !== 'user' || !m.image_urls || m.image_urls.length === 0) return null;
+        const resolved = await Promise.all(
+          m.image_urls.map((u) => downloadImageAsDataUrl(codingApiConfig(this.codingApiCtx), u)),
+        );
+        return resolved.filter((u): u is string => !!u);
+      }),
+    );
+
     this._postMessage({
       command: 'sessionLoaded',
       sessionId,
-      turns: messages
-        .filter((m) => m.role === 'user' || m.role === 'assistant')
-        .map((m, i) =>
-          m.role === 'user'
-            ? { id: `u${i}`, role: 'user', text: m.content ?? '' }
-            : {
-                id: `a${i}`,
-                role: 'assistant',
-                segments: m.content ? [{ kind: 'text', text: m.content }] : [],
-                thinking: m.reasoning ?? '',
-                thinkingStart: null,
-                thinkingDone: true,
-                thinkingSeconds: null,
-                thinkingExpanded: false,
-              },
-        ),
+      turns: filtered.map((m, i) =>
+        m.role === 'user'
+          ? {
+              id: `u${i}`,
+              role: 'user',
+              text: m.content ?? '',
+              imageUrls: imageDataUrlsByMessage[i] ?? undefined,
+              fileUrls: m.file_urls,
+            }
+          : {
+              id: `a${i}`,
+              role: 'assistant',
+              segments: m.content ? [{ kind: 'text', text: m.content }] : [],
+              thinking: m.reasoning ?? '',
+              thinkingStart: null,
+              thinkingDone: true,
+              thinkingSeconds: null,
+              thinkingExpanded: false,
+            },
+      ),
     });
   }
 

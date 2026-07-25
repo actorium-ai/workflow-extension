@@ -305,3 +305,69 @@ export async function uploadImage(
     return null;
   }
 }
+
+/**
+ * GET a storage-service image by its BFF-relative URL (e.g.
+ * "/api/workspaces/:wid/images/:id", as returned in SessionMessage.image_urls)
+ * and return it as a data: URL. Needed because the chat webview is sandboxed
+ * and cannot itself attach an Authorization: Bearer header to a plain
+ * `<img src>` request — only the extension host holds the token (same
+ * constraint uploadImage/uploadFile work around). Returns null on any
+ * failure; the caller should just omit the image rather than show a broken
+ * thumbnail.
+ */
+export async function downloadImageAsDataUrl(
+  config: CodingApiConfig,
+  relativeUrl: string,
+): Promise<string | null> {
+  const token = await config.getToken();
+  if (!token) return null;
+  try {
+    const resp = await fetch(`${config.storageServiceUrl}${relativeUrl}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!resp.ok) return null;
+    const contentType = resp.headers.get('content-type') || 'image/png';
+    const buf = Buffer.from(await resp.arrayBuffer());
+    return `data:${contentType};base64,${buf.toString('base64')}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * POST /api/workspaces/{workspaceId}/files — upload an attached file to
+ * storage-service, returning its id for a /chat request's file_ids (see
+ * ChatTurnRequest — already accepted end-to-end server-side, no backend
+ * changes needed). Mirrors uploadImage above exactly, except the real
+ * filename is sent (storage-service serves it back via Content-Disposition
+ * on read, and the agent's read_uploaded_file tool uses it for format
+ * detection) rather than a generic "pasted-image.ext" name. Returns null on
+ * any failure — same degrade-gracefully contract as uploadImage.
+ */
+export async function uploadFile(
+  config: CodingApiConfig,
+  workspaceId: string,
+  data: Uint8Array,
+  filename: string,
+  mimeType: string,
+): Promise<string | null> {
+  const token = await config.getToken();
+  if (!token) return null;
+  try {
+    const form = new FormData();
+    form.append('file', new Blob([data], { type: mimeType }), filename);
+    const resp = await fetch(`${config.storageServiceUrl}/api/workspaces/${workspaceId}/files`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!resp.ok) return null;
+    const body = (await resp.json()) as { id?: string; data?: { id?: string } };
+    return body.id ?? body.data?.id ?? null;
+  } catch {
+    return null;
+  }
+}

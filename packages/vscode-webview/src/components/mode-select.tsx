@@ -52,7 +52,12 @@ export function ModeSelect({ mode, onSetMode }: ModeSelectProps) {
             Select.Value merges its own "value" slot classes into this
             element's className, and that slot's own font-size wins here
             regardless of what's set on an ancestor. */}
-        <Select.Value className="truncate text-[10.5px]!">{current.label}</Select.Value>
+        {/* Hidden below ~340px of panel width, matching model-picker.tsx's
+            own breakpoint — the mode icon + chevron alone still identify
+            and operate the picker. */}
+        <Select.Value className="truncate text-[10.5px]! max-[340px]:hidden">
+          {current.label}
+        </Select.Value>
         <ChevronDown className="h-3 w-3 shrink-0 opacity-60" aria-hidden="true" />
       </Select.Trigger>
       <Select.Popover

@@ -41,7 +41,16 @@ function newAssistantTurn(id: string, now: number): AssistantTurn {
 }
 
 export type TurnsAction =
-  | { type: 'addUser'; id: string; text: string; queued?: boolean }
+  | {
+      type: 'addUser';
+      id: string;
+      text: string;
+      queued?: boolean;
+      imageUrls?: string[];
+      imageIds?: string[];
+      fileUrls?: Array<{ filename: string; sizeBytes: number; url?: string }>;
+    }
+  | { type: 'setImageUrls'; turnId: string; imageUrls: string[] }
   | { type: 'addAssistant'; id: string; now: number }
   | { type: 'appendText'; turnId: string; text: string }
   | { type: 'reasoning'; turnId: string; content: string }
@@ -81,7 +90,22 @@ export type TurnsAction =
 export function turnsReducer(state: Turn[], action: TurnsAction): Turn[] {
   switch (action.type) {
     case 'addUser':
-      return [...state, { id: action.id, role: 'user', text: action.text, queued: action.queued }];
+      return [
+        ...state,
+        {
+          id: action.id,
+          role: 'user',
+          text: action.text,
+          queued: action.queued,
+          imageUrls: action.imageUrls,
+          imageIds: action.imageIds,
+          fileUrls: action.fileUrls,
+        },
+      ];
+    case 'setImageUrls':
+      return state.map((t) =>
+        t.id === action.turnId && t.role === 'user' ? { ...t, imageUrls: action.imageUrls } : t,
+      );
     case 'addAssistant':
       return [...state, newAssistantTurn(action.id, action.now)];
     case 'appendText':

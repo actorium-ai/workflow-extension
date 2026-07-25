@@ -24,12 +24,15 @@ const ICON_BTN_CLASS =
  * Seeded by display name rather than org/workspace id (the id isn't plumbed
  * to the webview today — see AuthManager.switchWorkspace) — stable enough in
  * practice, just shifts color on a rename rather than never. */
-function IconSquare({ name }: { name: string }) {
+function IconSquare({ name, className }: { name: string; className?: string }) {
   const initial = (name.trim()[0] ?? '?').toUpperCase();
   return (
     <span
       aria-hidden="true"
-      className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[6px] text-[9px] font-bold text-white"
+      className={
+        'flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[6px] text-[9px] font-bold text-white' +
+        (className ? ` ${className}` : '')
+      }
       style={{ background: deriveIconColor(name) }}
     >
       {initial}
@@ -62,13 +65,19 @@ export function WorkspacePill({
     >
       {orgName ? (
         <>
-          <IconSquare name={orgName} />
-          <span className="max-w-20 truncate">{orgName}</span>
-          <span className="text-text-muted" aria-hidden="true">
+          {/* Org icon/name/slash drop below ~300px of panel width, keeping
+              only the workspace half — the workspace is the more useful
+              identifier day-to-day, and the button's own title tooltip still
+              carries the full "org / workspace" label. Lets the whole top
+              bar (workspace pill + New session + avatar) fit on one line
+              instead of wrapping. */}
+          <IconSquare name={orgName} className="max-[300px]:hidden" />
+          <span className="min-w-0 max-w-20 truncate max-[300px]:hidden">{orgName}</span>
+          <span className="text-text-muted max-[300px]:hidden" aria-hidden="true">
             /
           </span>
           <IconSquare name={workspaceName} />
-          <span className="max-w-20 truncate">{workspaceName}</span>
+          <span className="min-w-0 max-w-20 truncate">{workspaceName}</span>
         </>
       ) : (
         <span className="text-text-muted">Select workspace</span>

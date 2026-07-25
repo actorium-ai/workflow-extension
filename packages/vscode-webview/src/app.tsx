@@ -67,6 +67,9 @@ export function App() {
           pendingImages={c.pendingImages}
           onImagePaste={c.addPendingImage}
           onImageRemove={c.removePendingImage}
+          pendingFiles={c.pendingFiles}
+          onFileAttach={c.addPendingFile}
+          onFileRemove={c.removePendingFile}
           onDropFiles={c.dropFiles}
           slashCommands={c.slashCommands}
           onRequestSlashCommands={c.requestSlashCommands}

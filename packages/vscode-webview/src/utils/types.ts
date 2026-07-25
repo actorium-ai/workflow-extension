@@ -80,6 +80,23 @@ export interface UserTurn {
   role: 'user';
   text: string;
   queued?: boolean;
+  /** Displayable image URLs (data: URLs when live-echoed from a local blob
+   * preview, or resolved by the extension host when restoring history — see
+   * panel.ts's loadSessionIntoView, since the webview itself can't attach
+   * the bearer token a direct storage-service fetch would need). */
+  imageUrls?: string[];
+  /** Durable storage-service ids for the same images, in the same order as
+   * imageUrls — kept alongside so a self-persisted turn (vscode.setState,
+   * not a server-fetched sessionLoaded) can ask the extension host to
+   * re-resolve fresh imageUrls on restore (see use-chat-controller.ts's
+   * mount effect + panel.ts's 'resolveImageUrls') rather than trusting
+   * whatever was last embedded client-side to still be good. */
+  imageIds?: string[];
+  /** Attached (non-image) files — informational chip only, no fetched
+   * content: sizeBytes/filename are known locally at send time or come back
+   * from hermes-agent's file_urls on reload (blank when the message predates
+   * file_meta support, since there's nothing to backfill from). */
+  fileUrls?: Array<{ filename: string; sizeBytes: number; url?: string }>;
 }
 
 export type Turn = AssistantTurn | UserTurn;
