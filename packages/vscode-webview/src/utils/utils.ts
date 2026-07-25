@@ -155,8 +155,20 @@ export function extractPatch(output: unknown): string | null {
   return typeof patch === 'string' && patch.length > 0 ? patch : null;
 }
 
+/** Most tools (files.ts/git.ts/terminal.ts's ToolResultPayload) wrap their
+ * real text in an `{ok, content}` / `{ok: false, error}` envelope — dumping
+ * that whole object as JSON just to get at the text is pure noise (worse,
+ * JSON.stringify escapes the content's own real newlines as literal `\n`
+ * sequences). Show the actual string as-is whenever the envelope is that
+ * shape, and only fall back to a JSON dump for output that has no single
+ * text field to show (e.g. browse_directory's `{ok, files}` array). */
 export function formatOutput(output: unknown): string {
   if (typeof output === 'string') return output;
+  if (output && typeof output === 'object' && !Array.isArray(output)) {
+    const obj = output as Record<string, unknown>;
+    if (typeof obj.content === 'string') return obj.content;
+    if (obj.ok === false && typeof obj.error === 'string') return obj.error;
+  }
   try {
     return JSON.stringify(output, null, 2);
   } catch {

@@ -28,9 +28,9 @@ import {
 import { DiffView } from './diff-view';
 
 const TOGGLE_CLASS =
-  'inline-flex items-center gap-1.5 self-start rounded px-1 py-0.5 text-xs text-text-muted hover:bg-surface-secondary hover:text-text-primary';
+  'inline-flex items-center gap-1.5 self-start rounded px-1 py-0.5 text-left text-xs text-text-muted hover:bg-surface-secondary hover:text-text-primary';
 const TOGGLE_INERT_CLASS =
-  'inline-flex items-center gap-1.5 self-start rounded px-1 py-0.5 text-xs text-text-muted';
+  'inline-flex items-center gap-1.5 self-start rounded px-1 py-0.5 text-left text-xs text-text-muted';
 
 /** Per-tool icon for the IDE's own client-executed (deferred) tools — falls
  * back to the generic Wrench for every server-side tool (query_rag,
