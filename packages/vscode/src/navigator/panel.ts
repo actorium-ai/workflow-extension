@@ -1,26 +1,35 @@
 import type { MeUser, VersionEntry } from '@workflow-extension/shared';
 import * as vscode from 'vscode';
 
+import { getActoriumConfig } from '../config/environment.js';
+import { compareVersions, type VersionChecker } from '../version/checker.js';
+import { buildWebviewHtml } from '../webview-html.js';
+import { getWorkspaceFolder } from '../workspace/folderManager.js';
+import {
+  type AgentTarget,
+  DEFAULT_MCP_NPM_PACKAGE,
+  getClaudeCodeStatus,
+  getCodexStatus,
+  getMcpCliStatus,
+  getOpencodeStatus,
+  installMcpCli,
+} from '../workspace/mcpConnect.js';
+import { listLinkedRepos } from '../workspace/repoLinker.js';
+import { DocContentProvider } from './doc-content-provider.js';
+import { FeatureDetailPanel } from './feature-detail-panel.js';
+import { FeaturesBrowserPanel } from './features-browser-panel.js';
+import { openWorkspaceDocument } from './open-document.js';
 import {
   codingApiConfig,
   type CodingApiContext,
-  deleteSession,
-  getFeatureTasks,
   listDocuments,
   listFeatures,
-  listSessions,
-} from '../chat/coding-api.js';
-import type { ChatPanelProvider } from '../chat/panel.js';
-import { getActoriumConfig } from '../config/environment.js';
-import { buildWebviewHtml } from '../webview-html.js';
-import { DocContentProvider } from './doc-content-provider.js';
-import { openWorkspaceDocument } from './open-document.js';
+} from './workflow-api.js';
 
 /**
- * Navigator panel provider — manages the primary-sidebar webview that lists
- * the current workspace's chat sessions, documents, and features (the
- * left-hand counterpart to the chat webview, which lives in the secondary
- * sidebar — see packages/vscode/package.json's viewsContainers).
+ * Navigator panel provider — manages the extension's one webview (primary
+ * sidebar), listing the current workspace's documents, features, and linked
+ * local repos.
  */
 export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
   private _view: vscode.WebviewView | null = null;
@@ -28,15 +37,14 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
   private _workspaceLabel: string | null = null;
   private _userProfile: MeUser | null = null;
   private _versionBlockedEntry: VersionEntry | null = null;
-  private _chatPanel: ChatPanelProvider | null = null;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly codingApiCtx: CodingApiContext,
-    private readonly onLoadSession: (sessionId: string) => Promise<void>,
-    private readonly onNewChat: () => void,
     private readonly docContentProvider: DocContentProvider,
-    private readonly getCurrentSessionId: () => string | null,
+    private readonly getWorkspaceId: () => string | null,
+    private readonly versionChecker: VersionChecker,
+    private readonly regenerateAgentsFile: (folderPath: string) => Promise<void>,
   ) {}
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -47,7 +55,7 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
       localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, 'webview', 'dist')],
     };
 
-    webviewView.webview.html = buildWebviewHtml(this.context, webviewView.webview, 'navigator');
+    webviewView.webview.html = buildWebviewHtml(this.context, webviewView.webview);
 
     webviewView.webview.onDidReceiveMessage(async (message) => {
       switch (message.command) {
@@ -59,14 +67,6 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
           vscode.commands.executeCommand('actorium.switchWorkspace');
           break;
 
-        case 'newChat':
-          this.onNewChat();
-          // Reveal the chat panel in the secondary sidebar — otherwise
-          // clearing an already-empty, off-screen chat looks like the click
-          // did nothing at all.
-          vscode.commands.executeCommand('actorium.chatPanel.focus');
-          break;
-
         case 'signOut':
           vscode.commands.executeCommand('actorium.disconnect');
           break;
@@ -76,32 +76,6 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
           vscode.env.openExternal(vscode.Uri.parse(`${frontendUrl}/settings/profile`));
           break;
         }
-
-        case 'listSessions':
-          await this._loadSessions();
-          break;
-
-        case 'deleteSession': {
-          const workspaceId = this.codingApiCtx.getWorkspaceId();
-          if (workspaceId)
-            await deleteSession(codingApiConfig(this.codingApiCtx), message.sessionId);
-          // The chat webview persists its OWN transcript cache independent
-          // of this session list (vscode.getState() in
-          // use-chat-controller.ts) — deleting a session server-side does
-          // nothing to that cache on its own. If the deleted session is the
-          // one currently open in chat, clear it the same way "New chat"
-          // does (also resets SseClient's session id so the next message
-          // doesn't try to continue a session that no longer exists).
-          if (message.sessionId === this.getCurrentSessionId()) {
-            this.onNewChat();
-          }
-          await this._loadSessions();
-          break;
-        }
-
-        case 'loadSession':
-          await this.onLoadSession(message.sessionId);
-          break;
 
         case 'listDocs': {
           const workspaceId = this.codingApiCtx.getWorkspaceId();
@@ -121,34 +95,63 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
           break;
         }
 
-        case 'insertMention':
-          this._chatPanel?.insertMention(message.token);
-          vscode.commands.executeCommand('actorium.chatPanel.focus');
-          break;
-
-        case 'listFeatureTasks': {
-          const workspaceId = this.codingApiCtx.getWorkspaceId();
-          const tasks = workspaceId
-            ? await getFeatureTasks(
-                codingApiConfig(this.codingApiCtx),
-                workspaceId,
-                message.featureId,
-              )
-            : null;
-          this._postMessage({
-            command: 'featureTasksLoaded',
-            featureId: message.featureId,
-            tasks: tasks ?? [],
-          });
-          break;
-        }
-
         case 'openDocument':
           await openWorkspaceDocument(message.doc, this.codingApiCtx, this.docContentProvider);
           break;
 
+        case 'openFeatureDetail':
+          FeatureDetailPanel.createOrShow(this.context, this.codingApiCtx, message.feature);
+          break;
+
+        case 'openFeaturesBrowser':
+          FeaturesBrowserPanel.createOrShow(this.context, this.codingApiCtx);
+          break;
+
+        case 'tagInPrompt':
+          this._tagInPrompt(message.text);
+          break;
+
         case 'openMarketplace':
           vscode.env.openExternal(vscode.Uri.parse(message.url));
+          break;
+
+        case 'listRepos':
+          await this._loadRepos();
+          break;
+
+        case 'addRepo':
+          await vscode.commands.executeCommand('actorium.addRepo');
+          await this._loadRepos();
+          break;
+
+        case 'listMcpStatus':
+          await this._loadMcpStatus();
+          break;
+
+        case 'connectAgent':
+          await vscode.commands.executeCommand('actorium.connectAgentTarget', message.target);
+          await this._loadMcpStatus();
+          break;
+
+        case 'disconnectAgent':
+          await vscode.commands.executeCommand('actorium.disconnectAgentTarget', message.target);
+          await this._loadMcpStatus();
+          break;
+
+        case 'getMcpCliStatus':
+          await this._loadMcpCliStatus();
+          break;
+
+        case 'installMcpCli':
+          await this._installMcpCli();
+          break;
+
+        case 'openWorkspaceFolder':
+          // A specific repo row's click also lands here (see
+          // workspace-panel.tsx) — every repo is a symlink directly inside
+          // the workspace folder, so opening that root already surfaces it
+          // in the Explorer; there's no separate "open just this repo" mode.
+          vscode.commands.executeCommand('actorium.openWorkspaceFolder');
           break;
 
         case 'ready':
@@ -158,16 +161,109 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  private async _loadSessions(): Promise<void> {
-    const workspaceId = this.codingApiCtx.getWorkspaceId();
-    const sessions = workspaceId
-      ? await listSessions(codingApiConfig(this.codingApiCtx), workspaceId)
-      : null;
-    this._postMessage({ command: 'sessionsLoaded', sessions: sessions ?? [] });
+  /**
+   * Inserts a plain-text reference into whatever terminal the user is
+   * mid-typing a prompt into (a coding agent CLI session) — not a structured
+   * mention, just a hint the agent can resolve with its own MCP tools
+   * (get_feature by name, read_storage_document by path, etc). Falls back to
+   * the clipboard when no terminal is focused, since `sendText` has nowhere
+   * to go otherwise.
+   */
+  private async _tagInPrompt(text: string): Promise<void> {
+    const terminal = vscode.window.activeTerminal;
+    if (terminal) {
+      terminal.show(true);
+      terminal.sendText(text, false);
+      return;
+    }
+    await vscode.env.clipboard.writeText(text);
+    vscode.window.showInformationMessage(
+      `Actorium: No active terminal — copied "${text}" to clipboard instead.`,
+    );
   }
 
-  /** Re-send extension-owned state on the webview's 'ready' handshake — same
-   * pattern as ChatPanelProvider._syncState. */
+  private async _loadRepos(): Promise<void> {
+    const workspaceId = this.getWorkspaceId();
+    const folder = workspaceId ? getWorkspaceFolder(this.context, workspaceId) : undefined;
+    const repos = folder ? await listLinkedRepos(folder) : [];
+    this._postMessage({ command: 'reposLoaded', repos, hasWorkspaceFolder: !!folder });
+  }
+
+  /** Passive status check — never prompts to link a workspace folder (unlike
+   * the connect/disconnect commands), since this fires automatically on
+   * every panel load/refresh and shouldn't surprise the user with a QuickPick
+   * just for opening the sidebar. */
+  private async _loadMcpStatus(): Promise<void> {
+    const workspaceId = this.getWorkspaceId();
+    const folder = workspaceId ? getWorkspaceFolder(this.context, workspaceId) : undefined;
+    if (!folder) {
+      this._postMessage({ command: 'mcpStatusLoaded', statuses: {} });
+      return;
+    }
+    const [claude, codex, opencode] = await Promise.all([
+      getClaudeCodeStatus(folder),
+      getCodexStatus(folder),
+      getOpencodeStatus(folder),
+    ]);
+    const statuses: Record<AgentTarget, unknown> = { claude, codex, opencode };
+    this._postMessage({ command: 'mcpStatusLoaded', statuses });
+  }
+
+  /**
+   * Checks whether the actorium-mcp CLI itself is installed (separate from
+   * per-agent registration, see _loadMcpStatus above) and, if so, compares
+   * it against the BFF's version-gate entry — `updateRequired` mirrors the
+   * extension's own hard-block model (installed < min_version), just scoped
+   * to this one row instead of the whole panel.
+   */
+  private async _loadMcpCliStatus(): Promise<void> {
+    const cli = await getMcpCliStatus();
+    const entry = this.versionChecker.getActoriumMcpVersionEntry();
+    const npmPackage = entry?.npm_package || DEFAULT_MCP_NPM_PACKAGE;
+
+    const installedVersion = cli.installed ? cli.version : undefined;
+    const updateRequired =
+      installedVersion !== undefined &&
+      !!entry &&
+      compareVersions(installedVersion, entry.min_version) < 0;
+    const updateAvailable =
+      installedVersion !== undefined &&
+      !!entry &&
+      compareVersions(installedVersion, entry.recommended_version) < 0;
+
+    this._postMessage({
+      command: 'mcpCliStatusLoaded',
+      status: {
+        installed: cli.installed,
+        version: cli.version,
+        npmPackage,
+        updateRequired,
+        updateAvailable,
+      },
+    });
+  }
+
+  /** Installs/updates the actorium-mcp CLI via npm, then re-syncs AGENTS.md
+   * (see extension.ts's regenerateAgentsFile) so a newly-installed CLI is
+   * reflected there too — same "sync after every state change" precedent as
+   * addRepo above. */
+  private async _installMcpCli(): Promise<void> {
+    const entry = this.versionChecker.getActoriumMcpVersionEntry();
+    const npmPackage = entry?.npm_package || DEFAULT_MCP_NPM_PACKAGE;
+
+    const result = await installMcpCli(npmPackage);
+    if (result.ok) {
+      vscode.window.showInformationMessage(`Actorium: ${result.message}`);
+      const workspaceId = this.getWorkspaceId();
+      const folder = workspaceId ? getWorkspaceFolder(this.context, workspaceId) : undefined;
+      if (folder) await this.regenerateAgentsFile(folder);
+    } else {
+      vscode.window.showErrorMessage(`Actorium: ${result.message}`);
+    }
+    await this._loadMcpCliStatus();
+  }
+
+  /** Re-send extension-owned state on the webview's 'ready' handshake. */
   private _syncState(): void {
     this._postMessage({ command: 'connectionChanged', connected: this._connected });
     this._postMessage({ command: 'workspaceLabelChanged', label: this._workspaceLabel });
@@ -194,17 +290,8 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
     this._postMessage({ command: 'userProfileChanged', profile });
   }
 
-  /** Wired after both providers are constructed (extension.ts) — avoids a
-   * constructor-order cycle since ChatPanelProvider doesn't need to know
-   * about the navigator. */
-  setChatPanel(chatPanel: ChatPanelProvider): void {
-    this._chatPanel = chatPanel;
-  }
-
-  /** Shows the same persistent, non-dismissible block overlay as
-   * ChatPanelProvider.setVersionBlocked — the navigator has its own separate
-   * webview, so it needs its own copy of this state rather than relying on
-   * whatever the chat panel is showing. */
+  /** Shows a persistent, non-dismissible block overlay when the extension
+   * version falls below the backend's minimum supported version. */
   setVersionBlocked(entry: VersionEntry): void {
     this._versionBlockedEntry = entry;
     this._postMessage({ command: 'versionBlocked', entry });

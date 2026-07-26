@@ -3,14 +3,10 @@ import './styles.css';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
-import { App } from './app';
+import { FeatureDetail } from './feature-detail';
+import { FeaturesBrowser } from './features-browser';
 import { Navigator } from './navigator';
-
-declare global {
-  interface Window {
-    __ACTORIUM_VIEW__?: 'chat' | 'navigator';
-  }
-}
+import { getPanelKind } from './utils/panel-context.ts';
 
 window.addEventListener('error', (e) => {
   const root = document.getElementById('root');
@@ -25,12 +21,19 @@ window.addEventListener('error', (e) => {
 const rootEl = document.getElementById('root');
 if (!rootEl) throw new Error('Actorium webview: #root element not found');
 
-// One bundle serves both the chat webview (secondary sidebar) and the
-// navigator webview (primary sidebar) — the extension host injects which one
-// this particular webview instance is via window.__ACTORIUM_VIEW__ (see
-// packages/vscode/src/webview-html.ts) rather than shipping two Vite entries.
-const view = window.__ACTORIUM_VIEW__ ?? 'chat';
+// One bundle, several possible roots — the extension host tells us which one
+// via window.__ACTORIUM_INITIAL_DATA__ (see webview-html.ts/panel-context.ts):
+// the sidebar Navigator (default), a feature-detail editor-tab panel, or the
+// full-workspace Features browser panel.
+const PANEL_ROOTS = {
+  navigator: Navigator,
+  'feature-detail': FeatureDetail,
+  'features-browser': FeaturesBrowser,
+} as const;
+const App = PANEL_ROOTS[getPanelKind()];
 
 createRoot(rootEl).render(
-  <StrictMode>{view === 'navigator' ? <Navigator /> : <App />}</StrictMode>,
+  <StrictMode>
+    <App />
+  </StrictMode>,
 );

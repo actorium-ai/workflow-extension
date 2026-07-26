@@ -1,121 +1,65 @@
 import type {
-  ApprovalChoice,
-  ApprovalPromptState,
-  ClarifyPromptState,
+  ActivityEvent,
+  FeatureHandoff,
   FeatureSummary,
+  HandoffPR,
   MeUser,
-  ModelOption,
-  OperationalMode,
-  SessionSummary,
   StorageDocument,
+  TaskDetail,
+  TaskDiff,
   TaskSummary,
   VersionEntry,
 } from '@workflow-extension/shared';
 
 export type {
-  ApprovalChoice,
-  ApprovalPromptState,
-  ClarifyPromptState,
+  ActivityEvent,
+  FeatureHandoff,
   FeatureSummary,
+  HandoffPR,
   MeUser,
-  ModelOption,
-  OperationalMode,
-  SessionSummary,
   StorageDocument,
+  TaskDetail,
+  TaskDiff,
   TaskSummary,
   VersionEntry,
 };
 
-/** Mirrors packages/vscode/src/chat/panel.ts's ActiveEditorContext — pushed
- * live by the extension host so the composer can show what file/selection
- * is about to be attached (Claude-Code-style context chip), independent of
- * ContextGatherer's own unconditional per-send gather() call. */
-export interface ActiveEditorContext {
-  path: string;
-  selection: { startLine: number; endLine: number } | null;
-}
-
-export interface ToolCallState {
-  callId: string;
+/** A repo symlinked into the current org's workspace folder (see the
+ * extension host's src/workspace/repoLinker.ts) — `target` is the real path
+ * the symlink resolves to, shown as a hint of where the actual clone lives. */
+export interface LinkedRepo {
   name: string;
-  status: 'running' | 'done';
-  output?: unknown;
-  expanded?: boolean;
-  /** Set once the hermes.tool.deferred event's params arrive — see
-   * ChatPanelProvider.setToolParams. Only ever populated for the IDE's own
-   * client-executed tools (read_file, edit_file, run_command, etc.); a
-   * server-side tool (query_rag, get_workspace_context, ...) only ever gets
-   * toolStart/toolComplete, which carry no params. */
-  params?: Record<string, unknown>;
+  target: string;
 }
 
-/**
- * One ordered piece of an assistant turn's output — text, tool calls, and
- * clarify prompts interleaved in the exact order the agent produced them
- * (mirrors opencode's flat Part[] model:
- * packages/session-ui/src/context/data.tsx's `part: {[messageID]: Part[]}`),
- * rather than "all text, then all tool calls" — so a Read → explain → Edit
- * → explain-more sequence renders in that order instead of every tool call
- * collapsing to the end of the turn.
- */
-export type AssistantSegment =
-  | { kind: 'text'; text: string }
-  | { kind: 'tool'; tc: ToolCallState }
-  | { kind: 'clarify'; clarify: ClarifyPromptState }
-  | { kind: 'approval'; approval: ApprovalPromptState };
+/** Local coding agents the extension knows how to register actorium-mcp
+ * with (see the extension host's src/workspace/mcpConnect.ts). */
+export type AgentTarget = 'claude' | 'codex' | 'opencode';
 
-export interface AssistantTurn {
-  id: string;
-  role: 'assistant';
-  segments: AssistantSegment[];
-  thinking: string;
-  thinkingStart: number | null;
-  thinkingDone: boolean;
-  thinkingSeconds: number | null;
-  thinkingExpanded: boolean;
+export interface AgentStatus {
+  registered: boolean;
+  /** Only meaningful when `registered` is true — undefined means we could
+   * only confirm the config entry exists, not whether it currently works
+   * (true for Codex/opencode, which have no live health check). */
+  connected?: boolean;
+  detail?: string;
 }
 
-export interface UserTurn {
-  id: string;
-  role: 'user';
-  text: string;
-  queued?: boolean;
-  /** Displayable image URLs (data: URLs when live-echoed from a local blob
-   * preview, or resolved by the extension host when restoring history — see
-   * panel.ts's loadSessionIntoView, since the webview itself can't attach
-   * the bearer token a direct storage-service fetch would need). */
-  imageUrls?: string[];
-  /** Durable storage-service ids for the same images, in the same order as
-   * imageUrls — kept alongside so a self-persisted turn (vscode.setState,
-   * not a server-fetched sessionLoaded) can ask the extension host to
-   * re-resolve fresh imageUrls on restore (see use-chat-controller.ts's
-   * mount effect + panel.ts's 'resolveImageUrls') rather than trusting
-   * whatever was last embedded client-side to still be good. */
-  imageIds?: string[];
-  /** Attached (non-image) files — informational chip only, no fetched
-   * content: sizeBytes/filename are known locally at send time or come back
-   * from hermes-agent's file_urls on reload (blank when the message predates
-   * file_meta support, since there's nothing to backfill from). */
-  fileUrls?: Array<{ filename: string; sizeBytes: number; url?: string }>;
-}
+export type AgentStatuses = Partial<Record<AgentTarget, AgentStatus>>;
 
-export type Turn = AssistantTurn | UserTurn;
-
-export interface MentionItem {
-  label: string;
-  description: string;
-  group?: string;
-  /** What actually gets inserted into the input on selection, when it
-   * differs from the displayed `label` — e.g. a `#` doc's label is just the
-   * friendly filename ("tasks.md") but the inserted token needs the owning
-   * feature's slug too ("distributed-agent-team/tasks.md") to disambiguate
-   * same-named files across features, mirroring digital-factory-ui's
-   * FileMentionItem.label vs insertFileMention's token. Falls back to
-   * `label` when unset (every other mention kind — `//`'s label already
-   * *is* the slug to insert). */
-  insertValue?: string;
-}
-
-export function isAssistantTurn(turn: Turn): turn is AssistantTurn {
-  return turn.role === 'assistant';
+/** Whether the actorium-mcp binary itself is installed on PATH, and how its
+ * version compares to the backend's version-gate — distinct from
+ * AgentStatus above, which is per-agent *registration*, not the CLI's own
+ * presence/version. See the extension host's src/navigator/panel.ts
+ * (_loadMcpCliStatus) for how this is computed. */
+export interface McpCliStatus {
+  installed: boolean;
+  version?: string;
+  npmPackage: string;
+  /** Installed version is below the backend's min_version — hard block,
+   * mirrors the extension's own force-update gate (see VersionChecker). */
+  updateRequired: boolean;
+  /** Installed version is below recommended_version but not min_version —
+   * soft nudge. */
+  updateAvailable: boolean;
 }

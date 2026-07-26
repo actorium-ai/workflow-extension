@@ -1,10 +1,30 @@
-import type { VersionEntry, VersionInfo } from '@workflow-extension/shared';
+import type { McpVersionEntry, VersionEntry, VersionInfo } from '@workflow-extension/shared';
 import * as vscode from 'vscode';
 
 import { getActoriumConfig } from '../config/environment.js';
 
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
 const NUDGE_SUPPRESS_KEY = 'actorium.versionNudgeSuppressedUntil';
+
+/**
+ * Compares two dotted-numeric version strings. Returns -1 if a < b, 0 if
+ * equal, 1 if a > b. Shared by VersionChecker (extension self-check) and the
+ * Navigator panel's actorium-mcp CLI version check — both need the exact
+ * same "is installed below this threshold" comparison.
+ */
+export function compareVersions(a: string, b: string): number {
+  const parse = (v: string) => v.split('.').map(Number);
+  const partsA = parse(a);
+  const partsB = parse(b);
+
+  for (let i = 0; i < 3; i++) {
+    const na = partsA[i] ?? 0;
+    const nb = partsB[i] ?? 0;
+    if (na < nb) return -1;
+    if (na > nb) return 1;
+  }
+  return 0;
+}
 
 /**
  * Version checker — polls GET /extension/version on activation and every
@@ -21,6 +41,7 @@ export class VersionChecker {
   private readonly EXTENSION_VERSION: string;
   private _onBlocked: ((entry: VersionEntry) => void) | null = null;
   private _blockedEntry: VersionEntry | null = null;
+  private _actoriumMcpEntry: McpVersionEntry | null = null;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.EXTENSION_VERSION = context.extension.packageJSON?.version ?? '0.1.0';
@@ -28,8 +49,8 @@ export class VersionChecker {
 
   /**
    * Registers a callback fired whenever a hard version block is detected
-   * (installed < min_version) — drives the webviews' own persistent,
-   * non-dismissible block overlay (see ChatPanelProvider/
+   * (installed < min_version) — drives the Navigator webview's own
+   * persistent, non-dismissible block overlay (see
    * NavigatorPanelProvider.setVersionBlocked), separate from the native
    * showErrorMessage notification below (which a user can just dismiss and
    * keep using a blocked extension otherwise).
@@ -43,6 +64,14 @@ export class VersionChecker {
    * view, opened later in the session). */
   getBlockedEntry(): VersionEntry | null {
     return this._blockedEntry;
+  }
+
+  /** The actorium-mcp CLI's version-gate entry from the last successful
+   * check, or null before the first check completes (or if it's always
+   * failed — fail-open, same as the vscode check). Read by the Navigator
+   * panel when building the CLI install-status row. */
+  getActoriumMcpVersionEntry(): McpVersionEntry | null {
+    return this._actoriumMcpEntry;
   }
 
   /**
@@ -72,6 +101,7 @@ export class VersionChecker {
       }
 
       const versionInfo = (await resp.json()) as VersionInfo;
+      this._actoriumMcpEntry = versionInfo.actorium_mcp ?? null;
       this._evaluate(versionInfo.vscode);
     } catch (err) {
       // Fail-open on network errors — just log and continue
@@ -88,7 +118,7 @@ export class VersionChecker {
     const installed = this.EXTENSION_VERSION;
 
     // Hard block
-    if (this._compareVersions(installed, vscEntry.min_version) < 0) {
+    if (compareVersions(installed, vscEntry.min_version) < 0) {
       this._showBlockingBanner(vscEntry);
       return;
     }
@@ -99,7 +129,7 @@ export class VersionChecker {
       return; // Still suppressed
     }
 
-    if (this._compareVersions(installed, vscEntry.recommended_version) < 0) {
+    if (compareVersions(installed, vscEntry.recommended_version) < 0) {
       this._showUpdateNudge(vscEntry);
     }
   }
@@ -144,23 +174,6 @@ export class VersionChecker {
       const until = Date.now() + 24 * 60 * 60 * 1000;
       await this.context.globalState.update(NUDGE_SUPPRESS_KEY, until);
     }
-  }
-
-  /**
-   * Compare two semver strings. Returns -1 if a < b, 0 if equal, 1 if a > b.
-   */
-  private _compareVersions(a: string, b: string): number {
-    const parse = (v: string) => v.split('.').map(Number);
-    const partsA = parse(a);
-    const partsB = parse(b);
-
-    for (let i = 0; i < 3; i++) {
-      const na = partsA[i] ?? 0;
-      const nb = partsB[i] ?? 0;
-      if (na < nb) return -1;
-      if (na > nb) return 1;
-    }
-    return 0;
   }
 
   /**

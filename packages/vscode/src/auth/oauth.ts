@@ -10,6 +10,7 @@ import type {
 import * as vscode from 'vscode';
 
 import { getActoriumConfig } from '../config/environment.js';
+import { deleteCredentialFile, writeCredentialFile } from './credentialFile.js';
 
 const SECRET_KEY = 'actorium.authToken';
 const WORKSPACE_ID_KEY = 'actorium.selectedWorkspaceId';
@@ -46,9 +47,15 @@ export class AuthManager {
   private _onProfileChanged: ((profile: MeUser | null) => void) | null = null;
 
   constructor(private readonly context: vscode.ExtensionContext) {
-    this._selectedWorkspaceId = context.globalState.get<string>(WORKSPACE_ID_KEY) ?? null;
-    this._selectedWorkspaceLabel = context.globalState.get<string>(WORKSPACE_LABEL_KEY) ?? null;
-    this._selectedOrgId = context.globalState.get<string>(ORG_ID_KEY) ?? null;
+    // workspaceState (not globalState): scoped per opened folder/window by
+    // VS Code itself, so each window remembers its own org/workspace
+    // selection independently — opening a second window on a different
+    // org's folder no longer fights with whichever workspace the first
+    // window has selected. The login token (secrets, below) stays shared
+    // across windows, which is correct — same login everywhere.
+    this._selectedWorkspaceId = context.workspaceState.get<string>(WORKSPACE_ID_KEY) ?? null;
+    this._selectedWorkspaceLabel = context.workspaceState.get<string>(WORKSPACE_LABEL_KEY) ?? null;
+    this._selectedOrgId = context.workspaceState.get<string>(ORG_ID_KEY) ?? null;
   }
 
   /**
@@ -104,6 +111,10 @@ export class AuthManager {
       // blocking activation on it — _fetchOrgs stashes the profile as a side
       // effect and notifies via onProfileChanged whenever it resolves.
       void this._fetchOrgs().catch(() => {});
+      // Re-sync in case the credential file was deleted/never written on
+      // this machine (e.g. it predates this feature) — org/workspace were
+      // already restored from workspaceState in the constructor above.
+      void this._syncCredentialFile();
       return true;
     }
     return false;
@@ -132,9 +143,10 @@ export class AuthManager {
   }
 
   /**
-   * Returns the currently selected organization ID — usage (GET
-   * /api/me/usage) is per-org, not per-workspace, so the status bar's
-   * usage card needs this to pick the right section out of the response.
+   * Returns the currently selected organization's ID — needed alongside
+   * getWorkspaceId() when writing the per-folder workspace manifest (see
+   * workspace/workspaceManifest.ts) actorium-mcp reads to resolve its
+   * org/workspace scope directly from its own cwd.
    */
   getOrgId(): string | null {
     return this._selectedOrgId;
@@ -242,6 +254,7 @@ export class AuthManager {
 
         this._token = tokenData.access_token;
         await this.context.secrets.store(SECRET_KEY, tokenData.access_token);
+        await this._syncCredentialFile();
 
         this._stopPolling();
 
@@ -254,6 +267,31 @@ export class AuthManager {
         vscode.window.showErrorMessage(`Actorium: Token request error: ${err}`);
       }
     }, POLL_INTERVAL_MS);
+  }
+
+  /**
+   * Mirrors current token/org/workspace state to the shared credential file
+   * workflow-mcp reads (see credentialFile.ts) — called on every state
+   * change (connect, workspace switch, disconnect) that also touches
+   * SecretStorage/workspaceState above, so the file never drifts from what
+   * this class itself considers the source of truth. Note this file is a
+   * single machine-wide file, not scoped per window like workspaceState is
+   * — with multiple windows open on different workspaces, whichever one
+   * last synced "wins" as the default workspace_id/org_id for any
+   * actorium-mcp call that omits them explicitly (every tool still accepts
+   * an explicit workspace_id to override this).
+   */
+  private async _syncCredentialFile(): Promise<void> {
+    if (!this._token) {
+      await deleteCredentialFile();
+      return;
+    }
+    await writeCredentialFile({
+      accessToken: this._token,
+      orgId: this._selectedOrgId ?? undefined,
+      workspaceId: this._selectedWorkspaceId ?? undefined,
+      updatedAt: Date.now(),
+    });
   }
 
   private _stopPolling(): void {
@@ -273,9 +311,10 @@ export class AuthManager {
     this._selectedOrgId = null;
     this._userProfile = null;
     await this.context.secrets.delete(SECRET_KEY);
-    await this.context.globalState.update(WORKSPACE_ID_KEY, undefined);
-    await this.context.globalState.update(WORKSPACE_LABEL_KEY, undefined);
-    await this.context.globalState.update(ORG_ID_KEY, undefined);
+    await this.context.workspaceState.update(WORKSPACE_ID_KEY, undefined);
+    await this.context.workspaceState.update(WORKSPACE_LABEL_KEY, undefined);
+    await this.context.workspaceState.update(ORG_ID_KEY, undefined);
+    await this._syncCredentialFile();
     vscode.commands.executeCommand('setContext', 'actorium.connected', false);
     vscode.window.showInformationMessage('Actorium: Disconnected.');
     this._onDisconnected?.();
@@ -416,9 +455,10 @@ export class AuthManager {
     this._selectedWorkspaceId = picked.workspace.id;
     this._selectedWorkspaceLabel = `${picked.workspace.name} · ${org.organization_name}`;
     this._selectedOrgId = org.organization_id;
-    await this.context.globalState.update(WORKSPACE_ID_KEY, this._selectedWorkspaceId);
-    await this.context.globalState.update(WORKSPACE_LABEL_KEY, this._selectedWorkspaceLabel);
-    await this.context.globalState.update(ORG_ID_KEY, this._selectedOrgId);
+    await this.context.workspaceState.update(WORKSPACE_ID_KEY, this._selectedWorkspaceId);
+    await this.context.workspaceState.update(WORKSPACE_LABEL_KEY, this._selectedWorkspaceLabel);
+    await this.context.workspaceState.update(ORG_ID_KEY, this._selectedOrgId);
+    await this._syncCredentialFile();
     vscode.window.showInformationMessage(
       `Actorium: Using workspace "${picked.workspace.name}" in "${org.organization_name}".`,
     );

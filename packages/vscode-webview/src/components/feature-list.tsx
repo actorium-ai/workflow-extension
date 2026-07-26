@@ -1,107 +1,62 @@
-import { useState } from 'react';
+import { AtSign } from 'lucide-react';
 
 import { lifecycleMeta, statusSortIndex, tint } from '../utils/feature-meta.ts';
-import type { FeatureSummary, TaskSummary } from '../utils/types.ts';
-import { LifecycleGlyph, TaskStatusGlyph } from './status-glyph.tsx';
+import type { FeatureSummary } from '../utils/types.ts';
+import { LifecycleGlyph } from './status-glyph.tsx';
 
 interface FeatureListProps {
   features: FeatureSummary[];
-  taskCache: Record<string, TaskSummary[] | undefined>;
-  onRequestTasks: (featureId: string) => void;
-  onInsertMention: (token: string) => void;
+  /** Opens the feature-detail editor tab (Product Spec/Tech Design/Tasks/
+   * Handoff/Activity) — see NavigatorPanelProvider's openFeatureDetail
+   * handler and FeatureDetailPanel. */
+  onOpenFeatureDetail: (feature: FeatureSummary) => void;
+  /** Inserts a plain-text reference to a feature into the active terminal
+   * (or clipboard, if none) — see NavigatorPanelProvider's tagInPrompt
+   * handler. The text is picked up by whatever coding agent CLI the user is
+   * mid-typing a prompt to; it isn't a structured mention, just a hint the
+   * agent can resolve with its own MCP tools (get_feature by name, etc). */
+  onTagInPrompt: (text: string) => void;
 }
 
-function TaskRow({ task }: { task: TaskSummary }) {
-  const done =
-    task.status === 'done' || task.status === 'cancelled' || task.status === 'review_passed';
-  return (
-    <div className="flex items-center gap-2 py-1 pr-2 pl-9 text-left">
-      <TaskStatusGlyph status={task.status} size={10} />
-      <span
-        className={
-          'min-w-0 flex-1 truncate text-[11.5px]' +
-          (done ? ' text-text-muted' : ' text-text-primary')
-        }
-      >
-        {task.title}
-      </span>
-      <span className="shrink-0 font-mono text-[10px] text-text-muted">{task.task_name}</span>
-    </div>
-  );
+function featureTag(feature: FeatureSummary): string {
+  return `feature "${feature.feature_name || feature.title || feature.id}"`;
 }
 
 function FeatureRow({
   feature,
-  tasks,
-  onRequestTasks,
-  onInsertMention,
+  onOpenFeatureDetail,
+  onTagInPrompt,
 }: {
   feature: FeatureSummary;
-  tasks: TaskSummary[] | undefined;
-  onRequestTasks: (featureId: string) => void;
-  onInsertMention: (token: string) => void;
+  onOpenFeatureDetail: (feature: FeatureSummary) => void;
+  onTagInPrompt: (text: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const hasTasks = !!feature.task_counts && feature.task_counts.total > 0;
-
   return (
-    <div>
-      <div
-        draggable
-        onDragStart={(e) => {
-          e.dataTransfer.setData('text/plain', `<ft:${feature.feature_name || feature.id}>`);
-          e.dataTransfer.effectAllowed = 'copy';
-        }}
-        className="flex items-center gap-1 rounded-md px-2 py-1.5 hover:bg-surface-secondary"
+    <div className="group flex w-full items-center gap-1 rounded-md pr-1 hover:bg-surface-secondary">
+      <button
+        type="button"
+        title={feature.next_action || feature.current_stage}
+        onClick={() => onOpenFeatureDetail(feature)}
+        className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left"
       >
-        <button
-          type="button"
-          disabled={!hasTasks}
-          onClick={() => {
-            const next = !open;
-            setOpen(next);
-            if (next && tasks === undefined) onRequestTasks(feature.id);
-          }}
-          aria-label={open ? 'Collapse tasks' : 'Expand tasks'}
-          className={'shrink-0 text-text-muted' + (hasTasks ? '' : ' opacity-0')}
-        >
-          <span
-            className={'inline-block transition-transform' + (open ? ' rotate-90' : '')}
-            aria-hidden="true"
-          >
-            ›
-          </span>
-        </button>
         <LifecycleGlyph stage={feature.status} />
-        <button
-          type="button"
-          title={feature.next_action || feature.current_stage}
-          onClick={() => onInsertMention(`<ft:${feature.feature_name || feature.id}>`)}
-          className="min-w-0 flex-1 truncate text-left text-xs font-medium text-text-primary"
-        >
+        <span className="min-w-0 flex-1 truncate text-xs font-medium text-text-primary">
           {feature.feature_name || feature.title || feature.id}
-        </button>
-        <span
-          className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold"
-          style={{
-            color: lifecycleMeta(feature.status).color,
-            background: tint(lifecycleMeta(feature.status).color),
-          }}
-        >
-          {lifecycleMeta(feature.status).label}
         </span>
-      </div>
-      {open && (tasks ?? []).map((t) => <TaskRow key={t.id} task={t} />)}
+      </button>
+      <button
+        type="button"
+        title="Tag this feature in the terminal prompt"
+        onClick={() => onTagInPrompt(featureTag(feature))}
+        className="shrink-0 rounded p-1 text-text-muted opacity-0 hover:bg-surface-secondary hover:text-text-primary group-hover:opacity-100"
+      >
+        <AtSign className="h-3 w-3 shrink-0" aria-hidden="true" />
+      </button>
     </div>
   );
 }
 
-export function FeatureList({
-  features,
-  taskCache,
-  onRequestTasks,
-  onInsertMention,
-}: FeatureListProps) {
+export function FeatureList({ features, onOpenFeatureDetail, onTagInPrompt }: FeatureListProps) {
   if (features.length === 0) {
     return <div className="px-3 py-3 text-center text-xs text-text-muted">No features yet.</div>;
   }
@@ -137,9 +92,8 @@ export function FeatureList({
               <FeatureRow
                 key={f.id}
                 feature={f}
-                tasks={taskCache[f.id]}
-                onRequestTasks={onRequestTasks}
-                onInsertMention={onInsertMention}
+                onOpenFeatureDetail={onOpenFeatureDetail}
+                onTagInPrompt={onTagInPrompt}
               />
             ))}
           </div>

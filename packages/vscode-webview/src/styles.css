@@ -1,6 +1,5 @@
 @import 'tailwindcss';
 @import '@heroui/react/styles';
-@plugin '@tailwindcss/typography';
 
 /*
  * Color tokens mirror digital-factory-ui's tailwind.config.ts naming
@@ -67,74 +66,79 @@ body {
   flex-direction: column;
 }
 
-/* Markdown prose — same vscode-token colors piped into typography's own
-   custom properties, so `prose` output (headings/tables/code/links/...)
-   follows the editor theme without a separate light/dark variant. */
-.prose-chat {
-  --tw-prose-body: var(--color-text-primary);
-  --tw-prose-headings: var(--color-text-primary);
-  --tw-prose-lead: var(--color-text-secondary);
-  --tw-prose-links: var(--color-chip-fg);
-  --tw-prose-bold: var(--color-text-primary);
-  --tw-prose-counters: var(--color-text-secondary);
-  --tw-prose-bullets: var(--color-text-secondary);
-  --tw-prose-hr: var(--color-border);
-  --tw-prose-quotes: var(--color-text-secondary);
-  --tw-prose-quote-borders: var(--color-border);
-  --tw-prose-captions: var(--color-text-muted);
-  --tw-prose-code: var(--color-chip-fg);
-  --tw-prose-pre-code: var(--color-text-primary);
-  --tw-prose-pre-bg: var(--color-code-bg);
-  --tw-prose-th-borders: var(--color-border);
-  --tw-prose-td-borders: var(--color-border);
-  font-size: 0.92em;
-  line-height: 1.55;
-  /* Applied on the whole prose root, not just `pre` — an unbroken inline
-     `code` span (single backticks, e.g. a caret-underline row or a long
-     dotted type signature with no spaces) has no wrap rule of its own and
-     otherwise overflows straight past this narrow sidebar's edge, clipped
-     mid-word with no way to scroll back to it. `anywhere` (rather than
-     `break-word`) also shrinks the element's min-content width, so a long
-     unbreakable run can't force this flex child wider than its container in
-     the first place. */
-  overflow-wrap: anywhere;
+/* Rendered markdown for the feature-detail panel's Product Spec/Tech
+   Design/Tasks/Handoff tabs (see feature-detail.tsx's MarkdownDoc) — `marked`
+   emits plain semantic HTML with no classes, so it needs its own basic
+   type/spacing rules rather than relying on Tailwind utility classes. */
+.actorium-markdown h1,
+.actorium-markdown h2,
+.actorium-markdown h3 {
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin-top: 1.25em;
+  margin-bottom: 0.5em;
 }
-.prose-chat :where(code):not(:where([class~='not-prose'] *))::before,
-.prose-chat :where(code):not(:where([class~='not-prose'] *))::after {
-  content: none;
+.actorium-markdown h1:first-child,
+.actorium-markdown h2:first-child,
+.actorium-markdown h3:first-child {
+  margin-top: 0;
 }
-.prose-chat :where(code):not(:where(pre code)) {
+.actorium-markdown h1 {
+  font-size: 1.25em;
+}
+.actorium-markdown h2 {
+  font-size: 1.1em;
+}
+.actorium-markdown h3 {
+  font-size: 1em;
+}
+.actorium-markdown p {
+  margin: 0.6em 0;
+  line-height: 1.6;
+}
+.actorium-markdown ul,
+.actorium-markdown ol {
+  margin: 0.5em 0;
+  padding-left: 1.4em;
+}
+.actorium-markdown li {
+  margin: 0.2em 0;
+  line-height: 1.5;
+}
+.actorium-markdown code {
   background: var(--color-code-bg);
-  border-radius: 3px;
-  padding: 1px 4px;
-  font-weight: 400;
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.9em;
 }
-
-.prose-chat pre {
+.actorium-markdown pre {
   background: var(--color-code-bg);
   border-radius: 6px;
-  overflow-x: hidden;
-  white-space: pre-wrap;
+  padding: 0.75em;
+  overflow-x: auto;
+  margin: 0.75em 0;
 }
-/* Chip visual styling (pill shape + per-kind color) now lives entirely in
-   utils/chip-styles.ts's CHIP_CLASS — Tailwind utility classes applied
-   directly by markdown.tsx's SpanRenderer and input-bar.tsx's composer,
-   mirroring digital-factory-ui's own chip-styles.ts exactly. `data-chip` is
-   still SET on every chip span (for DOM querying / kind identification)
-   but no longer STYLED via this attribute selector. */
+.actorium-markdown pre code {
+  background: none;
+  padding: 0;
+}
+.actorium-markdown a {
+  color: var(--color-accent-foreground);
+}
+.actorium-markdown blockquote {
+  border-left: 3px solid var(--color-border);
+  padding-left: 0.75em;
+  margin: 0.6em 0;
+  color: var(--color-text-secondary);
+}
+.actorium-markdown table {
+  border-collapse: collapse;
+  margin: 0.6em 0;
+}
+.actorium-markdown th,
+.actorium-markdown td {
+  border: 1px solid var(--color-border);
+  padding: 0.3em 0.6em;
+}
 
-@keyframes chat-bounce {
-  0%,
-  60%,
-  100% {
-    transform: translateY(0);
-    opacity: 0.5;
-  }
-  30% {
-    transform: translateY(-3px);
-    opacity: 1;
-  }
-}
-.animate-chat-bounce {
-  animation: chat-bounce 1s infinite;
-}

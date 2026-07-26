@@ -1,44 +1,23 @@
-import { FolderOpen, History, ListTodo, Plus } from 'lucide-react';
-import { useMemo } from 'react';
+import { ExternalLink, FolderGit2, FolderOpen, ListTodo, Plus } from 'lucide-react';
 
 import { AuthPrompt } from './components/auth-prompt';
 import { CollapsibleSection } from './components/collapsible-section';
 import { DocList } from './components/doc-list';
 import { FeatureList } from './components/feature-list';
 import { WorkspacePill } from './components/header';
-import { SessionList } from './components/session-list';
 import { UserMenu } from './components/user-menu';
 import { VersionBlocked } from './components/version-blocked';
+import { WorkspacePanel } from './components/workspace-panel';
 import { useNavigatorController } from './state/use-navigator-controller';
 
 /**
- * Navigator app — the primary-sidebar counterpart to the chat webview
- * (packages/vscode-webview/src/app.tsx), which now lives in the secondary
- * sidebar. Lists the current workspace's chat sessions, documents, and
- * features; loading a session or clicking a doc/feature relays through the
- * extension host to the chat webview (see NavigatorPanelProvider).
+ * Navigator app — the extension's one webview (primary sidebar). Lists the
+ * current workspace's linked local repos, documents, and features; clicking
+ * a doc opens it, relaying through the extension host (see
+ * NavigatorPanelProvider).
  */
 export function Navigator() {
   const c = useNavigatorController();
-
-  // id -> name, for SessionList's HighlightedText to resolve `<ft:>`/`<d:>`
-  // tags in a session's title/excerpt — by the time a tag reaches a stored
-  // session, its feature reference is a raw UUID (mentions.ts's
-  // resolveMentions rewrites the human-typed slug before the message is
-  // ever sent), so without this lookup the chip permanently shows a UUID.
-  // Reuses c.features — already loaded for the Features section below, no
-  // separate fetch needed.
-  const featureNames = useMemo(
-    () => Object.fromEntries(c.features.map((f) => [f.id, f.feature_name])),
-    [c.features],
-  );
-  // Feature id -> status (the lifecycle-stage vocabulary — see
-  // feature-list.tsx's own LifecycleGlyph usage), for the same chip's
-  // status glyph.
-  const featureStages = useMemo(
-    () => Object.fromEntries(c.features.map((f) => [f.id, f.status])),
-    [c.features],
-  );
 
   if (c.versionBlocked) {
     return <VersionBlocked entry={c.versionBlocked} onUpdate={c.openMarketplace} />;
@@ -50,31 +29,13 @@ export function Navigator() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      {/* Stays on one line by design — WorkspacePill (header.tsx) already
-          collapses its org half away below 300px, and the New session
-          button drops its text label below 280px, so both sides shrink
-          enough to fit together before flex-wrap would ever need to kick
-          in. Wrapping to a second line reads worse than either collapse. */}
       <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-3">
         <WorkspacePill workspaceLabel={c.workspaceLabel} onSwitchWorkspace={c.switchWorkspace} />
-        <div className="flex shrink-0 items-center gap-2">
-          <button
-            className="flex h-7 shrink-0 items-center gap-1 rounded-lg px-2 text-xs font-semibold text-text-primary hover:bg-surface-secondary"
-            title="New session"
-            onClick={c.newChat}
-          >
-            <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-            {/* Hidden rather than removed below ~280px of panel width — the
-                icon + title tooltip alone still make the action discoverable,
-                same pattern VS Code's own narrow toolbars use. */}
-            <span className="max-[280px]:hidden">New session</span>
-          </button>
-          <UserMenu
-            profile={c.userProfile}
-            onSignOut={c.signOut}
-            onOpenProfileSettings={c.openProfileSettings}
-          />
-        </div>
+        <UserMenu
+          profile={c.userProfile}
+          onSignOut={c.signOut}
+          onOpenProfileSettings={c.openProfileSettings}
+        />
       </div>
 
       {!c.workspaceLabel ? (
@@ -90,15 +51,33 @@ export function Navigator() {
       ) : (
         <div className="flex-1 overflow-y-auto">
           <CollapsibleSection
-            title="Sessions"
-            icon={<History className="h-3 w-3 shrink-0" aria-hidden="true" />}
+            title="Workspace"
+            icon={<FolderGit2 className="h-3 w-3 shrink-0" aria-hidden="true" />}
+            action={
+              c.hasWorkspaceFolder ? (
+                <button
+                  type="button"
+                  title="Add repo"
+                  onClick={c.addRepo}
+                  className="shrink-0 rounded p-1 text-text-muted hover:bg-surface-secondary hover:text-text-primary"
+                >
+                  <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+              ) : undefined
+            }
           >
-            <SessionList
-              sessions={c.sessions}
-              onLoad={c.loadSession}
-              onDelete={c.deleteSession}
-              featureNames={featureNames}
-              featureStages={featureStages}
+            <WorkspacePanel
+              repos={c.repos}
+              hasWorkspaceFolder={c.hasWorkspaceFolder}
+              onOpenWorkspaceFolder={c.openWorkspaceFolder}
+              mcpCliStatus={c.mcpCliStatus}
+              mcpCliInstalling={c.mcpCliInstalling}
+              onInstallMcpCli={c.installMcpCli}
+              mcpStatuses={c.mcpStatuses}
+              pendingAgents={c.pendingAgents}
+              onConnectAgent={c.connectAgent}
+              onDisconnectAgent={c.disconnectAgent}
+              onTagInPrompt={c.tagInPrompt}
             />
           </CollapsibleSection>
 
@@ -111,7 +90,7 @@ export function Navigator() {
               docs={c.docs}
               features={c.features}
               onOpenDocument={c.openDocument}
-              onInsertMention={c.insertMention}
+              onTagInPrompt={c.tagInPrompt}
             />
           </CollapsibleSection>
 
@@ -119,12 +98,21 @@ export function Navigator() {
             title="Features"
             icon={<ListTodo className="h-3 w-3 shrink-0" aria-hidden="true" />}
             defaultOpen={false}
+            action={
+              <button
+                type="button"
+                title="Open all features"
+                onClick={c.openFeaturesBrowser}
+                className="shrink-0 rounded p-1 text-text-muted hover:bg-surface-secondary hover:text-text-primary"
+              >
+                <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            }
           >
             <FeatureList
               features={c.features}
-              taskCache={c.taskCache}
-              onRequestTasks={c.requestFeatureTasks}
-              onInsertMention={c.insertMention}
+              onOpenFeatureDetail={c.openFeatureDetail}
+              onTagInPrompt={c.tagInPrompt}
             />
           </CollapsibleSection>
         </div>

@@ -4,13 +4,13 @@ import * as nodePath from 'node:path';
 import type { StorageDocument } from '@workflow-extension/shared';
 import * as vscode from 'vscode';
 
+import { ACTORIUM_DOC_SCHEME, DocContentProvider } from './doc-content-provider.js';
 import {
   codingApiConfig,
   type CodingApiContext,
   getDocumentContent,
   getDocumentRaw,
-} from '../chat/coding-api.js';
-import { ACTORIUM_DOC_SCHEME, DocContentProvider } from './doc-content-provider.js';
+} from './workflow-api.js';
 
 const TEXT_EXTENSION_RE =
   /\.(md|mdx|txt|json|ya?ml|log|csv|toml|ini|conf|sh|js|jsx|ts|tsx|go|py|rb|rs|java|c|cpp|h|hpp|css|html|xml|sql)$/i;
@@ -34,10 +34,7 @@ const TEXT_EXTENSION_RE =
  * the actual stored bytes + content-type, correct for everything else
  * including images.
  *
- * Shared by NavigatorPanelProvider (its Docs sidebar) and ChatPanelProvider
- * (clicking a `#` file-mention chip in a message — see markdown.tsx) so both
- * open the exact same document the exact same way, rather than duplicating
- * this logic per caller.
+ * Used by NavigatorPanelProvider's Docs sidebar.
  */
 export async function openWorkspaceDocument(
   doc: StorageDocument,

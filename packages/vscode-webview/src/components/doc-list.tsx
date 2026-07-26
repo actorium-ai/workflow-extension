@@ -1,5 +1,5 @@
-import { Code2, File, FileText, Folder, ListChecks, MessageSquarePlus, Rocket } from 'lucide-react';
-import { type ComponentType, type ReactNode, useEffect, useState } from 'react';
+import { AtSign, Code2, File, FileText, Folder, ListChecks, Rocket } from 'lucide-react';
+import { type ComponentType, type ReactNode, useState } from 'react';
 
 import type { FeatureSummary, StorageDocument } from '../utils/types.ts';
 import { LifecycleGlyph } from './status-glyph.tsx';
@@ -8,7 +8,14 @@ interface DocListProps {
   docs: StorageDocument[];
   features: FeatureSummary[];
   onOpenDocument: (doc: StorageDocument) => void;
-  onInsertMention: (token: string) => void;
+  /** Inserts a plain-text reference to a document into the active terminal
+   * (or clipboard, if none) — see NavigatorPanelProvider's tagInPrompt
+   * handler and FeatureList's matching onTagInPrompt. */
+  onTagInPrompt: (text: string) => void;
+}
+
+function docTag(doc: StorageDocument): string {
+  return `document "${doc.path}"`;
 }
 
 // Ported from digital-factory-ui's folder-tree-sidebar.tsx PATH_LABELS/
@@ -37,12 +44,6 @@ interface TreeFolder {
   files: StorageDocument[];
 }
 
-interface ContextMenuState {
-  doc: StorageDocument;
-  x: number;
-  y: number;
-}
-
 function basenameOf(path: string): string {
   return path.split('/').pop() ?? path;
 }
@@ -50,23 +51,6 @@ function basenameOf(path: string): string {
 function labelForDoc(doc: StorageDocument): string {
   const basename = basenameOf(doc.path);
   return doc.title || PATH_LABELS[basename] || basename;
-}
-
-/** Canonical `<d:slug/relativePath>` mention tag for this doc — used by both
- * drag-and-drop (dataTransfer payload) and the right-click menu's "Append to
- * chat" action. The slug prefix disambiguates same-named files across
- * features (every feature has its own tasks.md) and lets panel.ts's
- * _resolveMentions rewrite it to the feature's UUID before send. A
- * workspace-root doc (no owning feature) uses the reserved "_workspace"
- * slug + its full workspace-relative path instead. */
-function mentionTokenForDoc(doc: StorageDocument, featureSlug?: string): string {
-  if (featureSlug && doc.feature_id) {
-    const segments = doc.path.split('/');
-    const idx = segments.findIndex((s) => s === featureSlug || s === doc.feature_id);
-    const relativePath = idx !== -1 ? segments.slice(idx + 1).join('/') : basenameOf(doc.path);
-    return `<d:${featureSlug}/${relativePath}>`;
-  }
-  return `<d:_workspace/${doc.path}>`;
 }
 
 function buildTree(docs: StorageDocument[]): TreeFolder {
@@ -130,43 +114,41 @@ function computeFeatureRoots(
 
 function DocRow({
   doc,
-  featureNameById,
   onOpenDocument,
-  onContextMenu,
+  onTagInPrompt,
 }: {
   doc: StorageDocument;
-  featureNameById: Map<string, string>;
   onOpenDocument: (doc: StorageDocument) => void;
-  onContextMenu: (doc: StorageDocument, x: number, y: number) => void;
+  onTagInPrompt: (text: string) => void;
 }) {
   const basename = basenameOf(doc.path);
   const Icon = PATH_ICONS[basename] ?? File;
   return (
-    <button
-      type="button"
-      title={doc.path}
-      draggable
-      onDragStart={(e) => {
-        const featureSlug = doc.feature_id ? featureNameById.get(doc.feature_id) : undefined;
-        e.dataTransfer.setData('text/plain', mentionTokenForDoc(doc, featureSlug));
-        e.dataTransfer.effectAllowed = 'copy';
-      }}
-      onClick={() => onOpenDocument(doc)}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        onContextMenu(doc, e.clientX, e.clientY);
-      }}
-      className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left hover:bg-surface-secondary"
-    >
-      {/* Fixed-width spacer matching Chevron's footprint below, so a file
-          row's icon lines up under a sibling folder row's icon rather than
-          starting further left where folders have no chevron. */}
-      <span className="inline-block w-3 shrink-0" aria-hidden="true" />
-      <Icon className="h-3.5 w-3.5 shrink-0 text-text-muted" aria-hidden="true" />
-      <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
-        {labelForDoc(doc)}
-      </span>
-    </button>
+    <div className="group flex w-full items-center gap-1.5 rounded-md pr-1 hover:bg-surface-secondary">
+      <button
+        type="button"
+        title={doc.path}
+        onClick={() => onOpenDocument(doc)}
+        className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left"
+      >
+        {/* Fixed-width spacer matching Chevron's footprint below, so a file
+            row's icon lines up under a sibling folder row's icon rather than
+            starting further left where folders have no chevron. */}
+        <span className="inline-block w-3 shrink-0" aria-hidden="true" />
+        <Icon className="h-3.5 w-3.5 shrink-0 text-text-muted" aria-hidden="true" />
+        <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
+          {labelForDoc(doc)}
+        </span>
+      </button>
+      <button
+        type="button"
+        title="Tag this document in the terminal prompt"
+        onClick={() => onTagInPrompt(docTag(doc))}
+        className="shrink-0 rounded p-1 text-text-muted opacity-0 hover:bg-surface-secondary hover:text-text-primary group-hover:opacity-100"
+      >
+        <AtSign className="h-3 w-3 shrink-0" aria-hidden="true" />
+      </button>
+    </div>
   );
 }
 
@@ -187,15 +169,13 @@ function Chevron({ open }: { open: boolean }) {
 function FolderContents({
   folder,
   featureRoots,
-  featureNameById,
   onOpenDocument,
-  onContextMenu,
+  onTagInPrompt,
 }: {
   folder: TreeFolder;
   featureRoots: Map<string, FeatureSummary>;
-  featureNameById: Map<string, string>;
   onOpenDocument: (doc: StorageDocument) => void;
-  onContextMenu: (doc: StorageDocument, x: number, y: number) => void;
+  onTagInPrompt: (text: string) => void;
 }) {
   return (
     <>
@@ -204,19 +184,12 @@ function FolderContents({
           key={f.path}
           folder={f}
           featureRoots={featureRoots}
-          featureNameById={featureNameById}
           onOpenDocument={onOpenDocument}
-          onContextMenu={onContextMenu}
+          onTagInPrompt={onTagInPrompt}
         />
       ))}
       {folder.files.map((d) => (
-        <DocRow
-          key={d.id}
-          doc={d}
-          featureNameById={featureNameById}
-          onOpenDocument={onOpenDocument}
-          onContextMenu={onContextMenu}
-        />
+        <DocRow key={d.id} doc={d} onOpenDocument={onOpenDocument} onTagInPrompt={onTagInPrompt} />
       ))}
     </>
   );
@@ -230,15 +203,13 @@ function FolderContents({
 function FolderNode({
   folder,
   featureRoots,
-  featureNameById,
   onOpenDocument,
-  onContextMenu,
+  onTagInPrompt,
 }: {
   folder: TreeFolder;
   featureRoots: Map<string, FeatureSummary>;
-  featureNameById: Map<string, string>;
   onOpenDocument: (doc: StorageDocument) => void;
-  onContextMenu: (doc: StorageDocument, x: number, y: number) => void;
+  onTagInPrompt: (text: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const feature = featureRoots.get(folder.path);
@@ -272,9 +243,8 @@ function FolderNode({
           <FolderContents
             folder={folder}
             featureRoots={featureRoots}
-            featureNameById={featureNameById}
             onOpenDocument={onOpenDocument}
-            onContextMenu={onContextMenu}
+            onTagInPrompt={onTagInPrompt}
           />
         </div>
       )}
@@ -282,101 +252,22 @@ function FolderNode({
   );
 }
 
-/** Right-click menu for a doc row — "Open" (same as left-click) and "Append
- * to chat" (inserts the same "#<label>" mention token dragging the row into
- * the chat input would). Fixed-position, closes on outside click/Escape,
- * mirroring digital-factory-ui's FolderContextMenu. */
-function DocContextMenu({
-  state,
-  onOpen,
-  onAppendToChat,
-  onClose,
-}: {
-  state: ContextMenuState;
-  onOpen: (doc: StorageDocument) => void;
-  onAppendToChat: (doc: StorageDocument) => void;
-  onClose: () => void;
-}) {
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
-
-  return (
-    <>
-      <div className="fixed inset-0 z-40" onClick={onClose} onContextMenu={onClose} />
-      <div
-        role="menu"
-        style={{ top: state.y, left: state.x }}
-        className="fixed z-50 w-40 overflow-hidden rounded-lg border border-border bg-surface py-1 shadow-2xl"
-      >
-        <button
-          type="button"
-          role="menuitem"
-          onClick={() => {
-            onOpen(state.doc);
-            onClose();
-          }}
-          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-text-secondary hover:bg-surface-secondary hover:text-text-primary"
-        >
-          <FileText className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          Open
-        </button>
-        <button
-          type="button"
-          role="menuitem"
-          onClick={() => {
-            onAppendToChat(state.doc);
-            onClose();
-          }}
-          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-text-secondary hover:bg-surface-secondary hover:text-text-primary"
-        >
-          <MessageSquarePlus className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          Append to chat
-        </button>
-      </div>
-    </>
-  );
-}
-
-export function DocList({ docs, features, onOpenDocument, onInsertMention }: DocListProps) {
-  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
-
+export function DocList({ docs, features, onOpenDocument, onTagInPrompt }: DocListProps) {
   if (docs.length === 0) {
     return <div className="px-3 py-3 text-center text-xs text-text-muted">No documents yet.</div>;
   }
 
   const tree = buildTree(docs);
   const featureRoots = computeFeatureRoots(docs, features);
-  const featureNameById = new Map(features.map((f) => [f.id, f.feature_name || f.title || f.id]));
 
   return (
     <div className="px-1">
       <FolderContents
         folder={tree}
         featureRoots={featureRoots}
-        featureNameById={featureNameById}
         onOpenDocument={onOpenDocument}
-        onContextMenu={(doc, x, y) => setContextMenu({ doc, x, y })}
+        onTagInPrompt={onTagInPrompt}
       />
-      {contextMenu && (
-        <DocContextMenu
-          state={contextMenu}
-          onOpen={onOpenDocument}
-          onAppendToChat={(doc) =>
-            onInsertMention(
-              mentionTokenForDoc(
-                doc,
-                doc.feature_id ? featureNameById.get(doc.feature_id) : undefined,
-              ),
-            )
-          }
-          onClose={() => setContextMenu(null)}
-        />
-      )}
     </div>
   );
 }
