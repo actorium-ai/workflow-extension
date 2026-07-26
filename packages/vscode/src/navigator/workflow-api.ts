@@ -8,6 +8,7 @@ import type {
   TaskDiff,
   TaskSummary,
   WorkspaceDetail,
+  WorkspaceRepo,
 } from '@workflow-extension/shared';
 
 import { getActoriumConfig } from '../config/environment.js';
@@ -163,6 +164,23 @@ export async function getFeatureHandoff(
   );
   if (!resp?.ok) return null;
   const body = (await resp.json()) as ApiSuccessResponse<FeatureHandoff>;
+  return body.data;
+}
+
+/** GET /api/workspaces/{id}/repos — every repo this workspace actually
+ * tracks (the SAME endpoint the browser's Repositories settings page hits),
+ * used to tell which of a user's locally-linked-repo symlinks correspond to
+ * a real workspace repo, and which workspace repos have no local link yet. */
+export async function getWorkspaceRepos(
+  config: CodingApiConfig,
+  workspaceId: string,
+): Promise<WorkspaceRepo[] | null> {
+  const resp = await authedFetch(
+    config,
+    `${config.workflowBackendUrl}/api/workspaces/${workspaceId}/repos`,
+  );
+  if (!resp?.ok) return null;
+  const body = (await resp.json()) as ApiSuccessResponse<WorkspaceRepo[]>;
   return body.data;
 }
 

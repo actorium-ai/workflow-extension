@@ -1,4 +1,5 @@
 import {
+  BadgeCheck,
   CheckCircle2,
   Circle,
   CircleArrowRight,
@@ -7,9 +8,10 @@ import {
   CircleDotDashed,
   CircleMinus,
   CircleX,
+  RotateCcw,
 } from 'lucide-react';
 
-import { lifecycleMeta, taskStatusMeta } from '../utils/feature-meta.ts';
+import { lifecycleMeta, taskStatusMeta, tint } from '../utils/feature-meta.ts';
 
 /** Lucide-style conical flask inside a circle — copied verbatim (same SVG
  * paths) from digital-factory-ui's board/status-glyph.tsx CircleFlask, used
@@ -88,22 +90,42 @@ export function LifecycleGlyph({ stage, size = 12 }: { stage: string; size?: num
   );
 }
 
-/** Task-status glyph — a deliberately simpler shape set than
- * LifecycleGlyph's (task statuses aren't shown in dfui's board view with
- * bespoke per-status icons the way feature stages are — its own
- * StatusGlyph keeps the same handful of stock shapes this mirrors). */
+/** Task-status glyph — same status -> icon mapping as digital-factory-ui's
+ * board/status-glyph.tsx GlyphIcon (it does have a bespoke icon per task
+ * status, contrary to what this file used to claim). */
 export function TaskStatusGlyph({ status, size = 11 }: { status: string; size?: number }) {
   const meta = taskStatusMeta(status);
   const props = { size, color: meta.color, 'aria-hidden': true } as const;
   let icon = <Circle {...props} />;
-  if (status === 'done' || status === 'review_passed') icon = <CheckCircle2 {...props} />;
-  else if (status === 'blocked') icon = <CircleX {...props} />;
-  else if (status === 'cancelled') icon = <CircleMinus {...props} />;
+  if (status === 'done') icon = <CheckCircle2 {...props} />;
+  else if (status === 'review_passed') icon = <BadgeCheck {...props} />;
+  else if (status === 'ready') icon = <CircleDashed {...props} />;
   else if (status === 'in_progress') icon = <CircleDotDashed {...props} />;
+  else if (status === 'in_review' || status === 'reviewing' || status === 'review_incomplete')
+    icon = <CircleDot {...props} />;
+  else if (status === 'blocked') icon = <CircleX {...props} />;
+  else if (status === 'change_requested') icon = <RotateCcw {...props} />;
+  else if (status === 'cancelled') icon = <CircleMinus {...props} />;
 
   return (
     <span className="inline-flex shrink-0" title={meta.label}>
       {icon}
+    </span>
+  );
+}
+
+/** Task-status pill with its glyph embedded inside, matching
+ * digital-factory-ui's board/status-glyph.tsx StatusBadge — replaces the
+ * old pattern of a bare label-only pill next to a separate glyph. */
+export function StatusPill({ status, size = 10 }: { status: string; size?: number }) {
+  const meta = taskStatusMeta(status);
+  return (
+    <span
+      className="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+      style={{ color: meta.color, background: tint(meta.color) }}
+    >
+      <TaskStatusGlyph status={status} size={size} />
+      {meta.label}
     </span>
   );
 }

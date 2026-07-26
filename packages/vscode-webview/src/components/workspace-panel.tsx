@@ -1,4 +1,4 @@
-import { AtSign, FolderGit2 } from 'lucide-react';
+import { AtSign, FolderGit2, FolderX, Link2 } from 'lucide-react';
 
 import type { AgentStatuses, AgentTarget, LinkedRepo, McpCliStatus } from '../utils/types.ts';
 import { AgentStatusList } from './agent-status-list.tsx';
@@ -12,6 +12,10 @@ interface WorkspacePanelProps {
   repos: LinkedRepo[];
   hasWorkspaceFolder: boolean;
   onOpenWorkspaceFolder: () => void;
+  /** Opens the add-repo flow (search/browse + symlink) — see the extension
+   * host's src/workspace/repoLinker.ts addRepo. Used both by the section's
+   * own "+" header action and by each unlinked repo row below. */
+  onAddRepo: () => void;
   mcpCliStatus: McpCliStatus | null;
   mcpCliInstalling: boolean;
   onInstallMcpCli: () => void;
@@ -25,11 +29,13 @@ interface WorkspacePanelProps {
   onTagInPrompt: (text: string) => void;
 }
 
-/** Lists the repos symlinked into the current org's local workspace folder
- * (see the extension host's src/workspace/repoLinker.ts) and lets the user
- * add more or jump into the folder — the local surface a coding agent like
- * Claude Code actually works from, as opposed to Docs/Features below which
- * read live workspace data over the network. Every repo is a symlink
+/** Lists every repo this workspace tracks (fetched from workflow-backend,
+ * cross-referenced against what's really symlinked into the local workspace
+ * folder — see the extension host's src/navigator/panel.ts _loadRepos) and
+ * lets the user add more or jump into the folder. A repo the workspace knows
+ * about but that has no local symlink yet renders as "not linked", with a
+ * Link action instead of the usual open/tag actions, since there's no local
+ * file to open or reference in a prompt yet. Every linked repo is a symlink
  * directly inside the workspace folder, so clicking one just opens that same
  * root (in the current window) rather than a separate "just this repo"
  * folder — the root's Explorer already surfaces it. */
@@ -37,6 +43,7 @@ export function WorkspacePanel({
   repos,
   hasWorkspaceFolder,
   onOpenWorkspaceFolder,
+  onAddRepo,
   mcpCliStatus,
   mcpCliInstalling,
   onInstallMcpCli,
@@ -69,32 +76,56 @@ export function WorkspacePanel({
       {repos.length === 0 ? (
         <div className="px-2 py-3 text-center text-xs text-text-muted">No repos linked yet.</div>
       ) : (
-        repos.map((repo) => (
-          <div
-            key={repo.name}
-            className="group flex w-full items-center gap-1.5 rounded-md pr-1 hover:bg-surface-secondary"
-          >
-            <button
-              type="button"
-              title={repo.target}
-              onClick={onOpenWorkspaceFolder}
-              className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left"
+        repos.map((repo) =>
+          repo.linked ? (
+            <div
+              key={repo.name}
+              className="group flex w-full items-center gap-1.5 rounded-md pr-1 hover:bg-surface-secondary"
             >
-              <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-text-muted" aria-hidden="true" />
-              <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
-                {repo.name}
+              <button
+                type="button"
+                title={repo.target}
+                onClick={onOpenWorkspaceFolder}
+                className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left"
+              >
+                <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-success" aria-hidden="true" />
+                <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
+                  {repo.name}
+                </span>
+              </button>
+              <button
+                type="button"
+                title="Tag this repo in the terminal prompt"
+                onClick={() => onTagInPrompt(repoTag(repo))}
+                className="shrink-0 rounded p-1 text-text-muted opacity-0 hover:bg-surface-secondary hover:text-text-primary group-hover:opacity-100"
+              >
+                <AtSign className="h-3 w-3 shrink-0" aria-hidden="true" />
+              </button>
+            </div>
+          ) : (
+            <div
+              key={repo.name}
+              className="group flex w-full items-center gap-1.5 rounded-md pr-1 hover:bg-surface-secondary"
+            >
+              <span
+                title="Not linked locally yet"
+                className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5"
+              >
+                <FolderX className="h-3.5 w-3.5 shrink-0 text-warning" aria-hidden="true" />
+                <span className="min-w-0 flex-1 truncate text-xs text-text-muted">{repo.name}</span>
               </span>
-            </button>
-            <button
-              type="button"
-              title="Tag this repo in the terminal prompt"
-              onClick={() => onTagInPrompt(repoTag(repo))}
-              className="shrink-0 rounded p-1 text-text-muted opacity-0 hover:bg-surface-secondary hover:text-text-primary group-hover:opacity-100"
-            >
-              <AtSign className="h-3 w-3 shrink-0" aria-hidden="true" />
-            </button>
-          </div>
-        ))
+              <button
+                type="button"
+                title={`Link "${repo.name}" to this workspace folder`}
+                onClick={onAddRepo}
+                className="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-warning opacity-0 hover:bg-surface-secondary group-hover:opacity-100"
+              >
+                <Link2 className="h-3 w-3 shrink-0" aria-hidden="true" />
+                Link
+              </button>
+            </div>
+          ),
+        )
       )}
 
       <div className="mx-2 my-1 border-t border-border" />

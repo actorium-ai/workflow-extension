@@ -110,12 +110,20 @@ export interface FeatureTaskCounts {
   todo: number;
 }
 
+/** Per-stage review state, keyed by stage (product_spec/tech_design/tasks/
+ * handoff) — mirrors digital-factory-ui's StageReview, used to show an
+ * approved checkmark on the feature-detail tab strip. */
+export interface StageReview {
+  review_status?: string | null;
+}
+
 export interface FeatureSummary {
   id: string;
   feature_name: string;
   title: string;
   status: string;
   current_stage: string;
+  stages?: Record<string, StageReview>;
   next_action: string;
   task_counts: FeatureTaskCounts;
   updated_at: string;
@@ -124,6 +132,20 @@ export interface FeatureSummary {
 export interface WorkspaceDetail extends WorkspaceSummary {
   features: FeatureSummary[];
   tasks: TaskSummary[];
+}
+
+// ── Workspace repos ─────────────────────────────────────────────────────────
+// GET /api/workspaces/:id/repos on workflow-backend (reuses the browser's own
+// endpoint — see WorkspaceRepo in workflow-backend's dto.go). `repo_id` is
+// the human-readable repo name (matches the local clone's folder name), used
+// to cross-reference against repoLinker.ts's locally-linked symlinks.
+
+export interface WorkspaceRepo {
+  id: string;
+  repo_id: string;
+  repo_url: string | null;
+  base_branch: string | null;
+  is_management_repo: boolean;
 }
 
 // ── Feature tasks (IDE) ─────────────────────────────────────────────────────

@@ -18,7 +18,6 @@ const WORKSPACE_LABEL_KEY = 'actorium.selectedWorkspaceLabel';
 const ORG_ID_KEY = 'actorium.selectedOrgId';
 const POLL_INTERVAL_MS = 5000;
 const MAX_POLL_ATTEMPTS = 120; // 10 minutes at 5s intervals
-const SWITCH_ORG_ITEM = '__switch_org__';
 
 /**
  * Manages OAuth device flow for the Actorium Agent.
@@ -367,15 +366,18 @@ export class AuthManager {
   }
 
   /**
-   * Show the workspace picker (scoped to the current/last-used org) and
-   * store the selection. Called automatically on first connect, and
-   * available via "Actorium: Switch Workspace" any time after. Mirrors
-   * digital-factory-ui's OrgWorkspaceSwitcher popover's two-level structure
-   * (workspaces-of-current-org first, with a "Switch organization" escape
-   * hatch into the full org list) rather than always asking org-then-
-   * workspace — read-only parity only: no "New workspace"/"Create
-   * organization" actions, since those are write operations with no backend
-   * calls wired up in the extension yet.
+   * Show the workspace picker — every org's workspaces in one flat list,
+   * grouped by org via QuickPick separators — and store the selection.
+   * Called automatically on first connect, and available via "Actorium:
+   * Switch Workspace" any time after. A prior version mirrored
+   * digital-factory-ui's OrgWorkspaceSwitcher popover literally (workspaces
+   * of the current org first, with a "Switch organization" row that drilled
+   * into a separate org picker) — that two-step hop doesn't earn its keep in
+   * a QuickPick the way it does in a popover with two visual panels, so this
+   * flattens straight to org > workspace in one list instead. Read-only
+   * parity only: no "New workspace"/"Create organization" actions, since
+   * those are write operations with no backend calls wired up in the
+   * extension yet.
    */
   async switchWorkspace(): Promise<void> {
     if (!this._token) {
@@ -396,62 +398,55 @@ export class AuthManager {
       return;
     }
 
-    const startingOrg = memberships.find((m) => m.organization_id === this._selectedOrgId);
-    await this._pickWorkspaceForOrg(memberships, startingOrg ?? memberships[0]!);
-  }
+    type Item = vscode.QuickPickItem & { workspace?: WorkspaceSummary; org?: MeMembership };
 
-  /**
-   * Shows the workspace list for `org` (with a checkmark on the currently
-   * selected one, per digital-factory-ui's WORKSPACES section), plus — when
-   * the caller belongs to more than one org — a "Switch organization" row
-   * that hands off to _pickOrg. Recurses back into itself after a org switch
-   * so the flow always ends on a workspace list, matching the browser
-   * popover's own back-and-forth between its two panels.
-   */
-  private async _pickWorkspaceForOrg(
-    memberships: MeMembership[],
-    org: MeMembership,
-  ): Promise<void> {
-    let workspaces: WorkspaceSummary[];
-    try {
-      workspaces = await this._fetchWorkspaces(org.organization_id);
-    } catch (err) {
-      vscode.window.showErrorMessage(`Actorium: ${err}`);
-      return;
-    }
-
-    type Item = vscode.QuickPickItem & {
-      workspace?: WorkspaceSummary;
-      action?: typeof SWITCH_ORG_ITEM;
-    };
-    const items: Item[] = workspaces.map((w) => ({
-      label: (w.id === this._selectedWorkspaceId ? '$(check) ' : '') + w.name,
-      description: w.slug,
-      workspace: w,
-    }));
-    if (memberships.length > 1) {
-      items.push(
-        { label: '', kind: vscode.QuickPickItemKind.Separator },
-        { label: '$(arrow-swap) Switch organization', action: SWITCH_ORG_ITEM },
-      );
-    }
-
-    const title = `${org.organization_name} · ${org.member_count} member${org.member_count === 1 ? '' : 's'}`;
-    const picked = await vscode.window.showQuickPick(items, {
-      title,
-      placeHolder:
-        workspaces.length === 0
-          ? `No workspaces in "${org.organization_name}"`
-          : 'Select a workspace',
+    // Passed as a Promise rather than a resolved array so showQuickPick
+    // renders its native busy/loading state while every org's workspaces
+    // fetch in parallel, instead of blocking with no picker on screen yet.
+    const itemsPromise: Promise<Item[]> = Promise.all(
+      memberships.map(async (org) => {
+        try {
+          return { org, workspaces: await this._fetchWorkspaces(org.organization_id) };
+        } catch (err) {
+          vscode.window.showErrorMessage(`Actorium: ${err}`);
+          return { org, workspaces: [] as WorkspaceSummary[] };
+        }
+      }),
+    ).then((perOrg) => {
+      const items: Item[] = [];
+      for (const { org, workspaces } of perOrg) {
+        items.push({
+          label: `${org.organization_name} · ${org.member_count} member${org.member_count === 1 ? '' : 's'}`,
+          kind: vscode.QuickPickItemKind.Separator,
+        });
+        if (workspaces.length === 0) {
+          items.push({ label: `No workspaces in "${org.organization_name}"` });
+          continue;
+        }
+        for (const w of workspaces) {
+          items.push({
+            // "Org / Workspace" breadcrumb, matching the sidebar's own
+            // WorkspacePill label format (header.tsx) — the picker should
+            // read the same way as the pill that opens it.
+            label:
+              (w.id === this._selectedWorkspaceId ? '$(check) ' : '') +
+              `${org.organization_name} / ${w.name}`,
+            description: w.slug,
+            workspace: w,
+            org,
+          });
+        }
+      }
+      return items;
     });
-    if (!picked) return;
 
-    if (picked.action === SWITCH_ORG_ITEM) {
-      await this._pickOrg(memberships);
-      return;
-    }
-    if (!picked.workspace) return;
+    const picked = await vscode.window.showQuickPick(itemsPromise, {
+      placeHolder: 'Select a workspace',
+      matchOnDescription: true,
+    });
+    if (!picked?.workspace || !picked.org) return;
 
+    const org = picked.org;
     this._selectedWorkspaceId = picked.workspace.id;
     this._selectedWorkspaceLabel = `${picked.workspace.name} · ${org.organization_name}`;
     this._selectedOrgId = org.organization_id;
@@ -463,22 +458,5 @@ export class AuthManager {
       `Actorium: Using workspace "${picked.workspace.name}" in "${org.organization_name}".`,
     );
     this._onWorkspaceChanged?.(this._selectedWorkspaceLabel);
-  }
-
-  /**
-   * "Switch organization" panel — full org list with member counts and a
-   * checkmark on the current org, mirroring digital-factory-ui's own
-   * "Switch organization" sub-panel. Picking one re-enters
-   * _pickWorkspaceForOrg for that org.
-   */
-  private async _pickOrg(memberships: MeMembership[]): Promise<void> {
-    const items = memberships.map((m) => ({
-      label: (m.organization_id === this._selectedOrgId ? '$(check) ' : '') + m.organization_name,
-      description: `${m.member_count} member${m.member_count === 1 ? '' : 's'}`,
-      org: m,
-    }));
-    const picked = await vscode.window.showQuickPick(items, { title: 'Switch organization' });
-    if (!picked) return;
-    await this._pickWorkspaceForOrg(memberships, picked.org);
   }
 }

@@ -1,8 +1,8 @@
-import { ChevronDown, ChevronRight, LayoutGrid, List, Search, Users } from 'lucide-react';
+import { ChevronDown, ChevronRight, LayoutGrid, List, Search } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
-import { LifecycleGlyph, TaskStatusGlyph } from './components/status-glyph.tsx';
-import { lifecycleMeta, STATUS_ORDER, taskStatusMeta, tint } from './utils/feature-meta.ts';
+import { LifecycleGlyph, StatusPill, TaskStatusGlyph } from './components/status-glyph.tsx';
+import { lifecycleMeta, STATUS_ORDER, tint } from './utils/feature-meta.ts';
 import type { FeatureSummary, TaskSummary } from './utils/types.ts';
 import { getVsCodeApi } from './utils/vscode-api.ts';
 
@@ -10,12 +10,26 @@ const vscode = getVsCodeApi();
 
 type ViewMode = 'list' | 'grid';
 
-type FilterChip = 'ready' | 'in_progress' | 'blocked';
+/** Quick filters differ by view, matching digital-factory-ui's board-view.tsx
+ * (LIST_FILTERS/KANBAN_FILTERS): List mode filters by whether a feature has
+ * any task in a given status; Grid (kanban) mode filters by the feature's
+ * own lifecycle stage — these are different axes, not the same filter
+ * re-labeled, so switching view resets whichever set was active. */
+const LIST_FILTERS: { key: string; label: string; glyphStatus: string; color: string }[] = [
+  { key: 'ready', label: 'Ready', glyphStatus: 'ready', color: 'var(--color-text-muted)' },
+  {
+    key: 'in_progress',
+    label: 'In Progress',
+    glyphStatus: 'in_progress',
+    color: 'var(--color-primary)',
+  },
+  { key: 'blocked', label: 'Blocked', glyphStatus: 'blocked', color: 'var(--color-danger)' },
+];
 
-const FILTER_CHIPS: { key: FilterChip; label: string }[] = [
-  { key: 'ready', label: 'Ready' },
-  { key: 'in_progress', label: 'In Progress' },
-  { key: 'blocked', label: 'Blocked' },
+const GRID_FILTERS: { key: string; stage: string }[] = [
+  { key: 'ready_for_implementation', stage: 'ready_for_implementation' },
+  { key: 'in_implementation', stage: 'in_implementation' },
+  { key: 'in_handoff', stage: 'in_handoff' },
 ];
 
 function matchesQuery(feature: FeatureSummary, query: string): boolean {
@@ -27,10 +41,23 @@ function matchesQuery(feature: FeatureSummary, query: string): boolean {
   );
 }
 
-function matchesChips(feature: FeatureSummary, chips: Set<FilterChip>): boolean {
+/** List mode: does this feature have any task in one of the checked
+ * statuses? "Ready" covers both 'ready' and 'todo' task counts, matching
+ * digital-factory-ui's LIST_FILTERS (taskStatuses: ["ready", "todo"]). */
+function matchesListChips(feature: FeatureSummary, chips: Set<string>): boolean {
   if (chips.size === 0) return true;
   const counts = feature.task_counts;
-  return Array.from(chips).some((chip) => (counts?.[chip] ?? 0) > 0);
+  if (chips.has('ready') && (counts?.ready ?? 0) + (counts?.todo ?? 0) > 0) return true;
+  if (chips.has('in_progress') && (counts?.in_progress ?? 0) > 0) return true;
+  if (chips.has('blocked') && (counts?.blocked ?? 0) > 0) return true;
+  return false;
+}
+
+/** Grid mode: is this feature currently in one of the checked lifecycle
+ * stages? */
+function matchesGridChips(feature: FeatureSummary, chips: Set<string>): boolean {
+  if (chips.size === 0) return true;
+  return chips.has(feature.status);
 }
 
 /** Every feature grouped by lifecycle status, in the SAME fixed canonical
@@ -49,6 +76,9 @@ function groupByStatus(features: FeatureSummary[]): [string, FeatureSummary[]][]
   return Array.from(byStatus.entries());
 }
 
+/** Green fill at 100%, matching digital-factory-ui's feature-list-view.tsx
+ * (a completed feature's bar reads as "done", not just "full of its own
+ * accent color"). */
 function ProgressBar({ counts }: { counts: FeatureSummary['task_counts'] }) {
   const total = counts?.total ?? 0;
   const done = counts?.done ?? 0;
@@ -56,59 +86,81 @@ function ProgressBar({ counts }: { counts: FeatureSummary['task_counts'] }) {
   return (
     <div className="flex w-24 shrink-0 items-center gap-2">
       <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-secondary">
-        <div className="h-full rounded-full bg-accent" style={{ width: `${pct}%` }} />
+        <div
+          className="h-full rounded-full"
+          style={{
+            width: `${pct}%`,
+            background: pct === 100 ? 'var(--color-success)' : 'var(--color-accent)',
+          }}
+        />
       </div>
       <span className="w-8 shrink-0 text-right text-[10px] text-text-muted">{pct}%</span>
     </div>
   );
 }
 
-/** No per-feature/per-task assignee data exists on FeatureSummary/TaskSummary
- * today — this is a placeholder slot (mirroring digital-factory-ui's
- * ASSIGNEES column) rather than fabricated names, so it reads as "not
- * tracked here" instead of silently showing wrong people. */
-function AssigneesCell() {
-  return (
-    <span className="flex items-center gap-1 text-text-muted" title="No assignee data available">
-      <Users className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-      <span className="text-[11px]">—</span>
-    </span>
-  );
-}
-
 function FilterChips({
+  mode,
   active,
   onToggle,
 }: {
-  active: Set<FilterChip>;
-  onToggle: (chip: FilterChip) => void;
+  mode: ViewMode;
+  active: Set<string>;
+  onToggle: (chip: string) => void;
 }) {
   return (
     <div className="flex items-center gap-1.5">
-      {FILTER_CHIPS.map((chip) => {
-        const isActive = active.has(chip.key);
-        return (
-          <button
-            key={chip.key}
-            type="button"
-            onClick={() => onToggle(chip.key)}
-            className={
-              'shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium ' +
-              (isActive
-                ? 'border-accent bg-accent text-primary-foreground'
-                : 'border-border text-text-secondary hover:bg-surface-secondary')
-            }
-          >
-            {chip.label}
-          </button>
-        );
-      })}
+      {mode === 'list'
+        ? LIST_FILTERS.map((f) => {
+            const isActive = active.has(f.key);
+            return (
+              <button
+                key={f.key}
+                type="button"
+                onClick={() => onToggle(f.key)}
+                className={
+                  'flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium ' +
+                  (isActive ? '' : 'border-border text-text-secondary hover:bg-surface-secondary')
+                }
+                style={
+                  isActive
+                    ? { borderColor: f.color, background: tint(f.color), color: f.color }
+                    : undefined
+                }
+              >
+                <TaskStatusGlyph status={f.glyphStatus} size={11} />
+                {f.label}
+              </button>
+            );
+          })
+        : GRID_FILTERS.map((f) => {
+            const meta = lifecycleMeta(f.stage);
+            const isActive = active.has(f.key);
+            return (
+              <button
+                key={f.key}
+                type="button"
+                onClick={() => onToggle(f.key)}
+                className={
+                  'flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium ' +
+                  (isActive ? '' : 'border-border text-text-secondary hover:bg-surface-secondary')
+                }
+                style={
+                  isActive
+                    ? { borderColor: meta.color, background: tint(meta.color), color: meta.color }
+                    : undefined
+                }
+              >
+                <LifecycleGlyph stage={f.stage} size={11} />
+                {meta.label}
+              </button>
+            );
+          })}
     </div>
   );
 }
 
 function TaskRow({ task, index }: { task: TaskSummary; index: number }) {
-  const meta = taskStatusMeta(task.status);
   return (
     <div className="flex items-center gap-2.5 py-1.5 pl-9 pr-3 text-xs">
       <TaskStatusGlyph status={task.status} size={13} />
@@ -118,13 +170,7 @@ function TaskRow({ task, index }: { task: TaskSummary; index: number }) {
       <span className="min-w-0 flex-1 truncate text-text-secondary">
         {task.title || task.task_name}
       </span>
-      <span
-        className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold"
-        style={{ color: meta.color, background: tint(meta.color) }}
-      >
-        {meta.label}
-      </span>
-      <span className="w-12 shrink-0" />
+      <StatusPill status={task.status} />
     </div>
   );
 }
@@ -139,6 +185,7 @@ function FeatureListRow({
   onOpen: (feature: FeatureSummary) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const meta = lifecycleMeta(feature.status);
   return (
     <div className="border-b border-border last:border-b-0">
       <div className="flex items-center gap-2 px-3 py-2 hover:bg-surface-secondary">
@@ -157,18 +204,22 @@ function FeatureListRow({
         <button
           type="button"
           onClick={() => onOpen(feature)}
+          title="Open feature"
           className="flex min-w-0 flex-1 items-center gap-2 text-left text-xs"
         >
           <LifecycleGlyph stage={feature.status} />
-          <span className="min-w-0 flex-1 truncate font-medium text-text-primary">
+          <span className="min-w-0 flex-1 truncate font-semibold text-text-primary">
             {feature.feature_name || feature.title || feature.id}
           </span>
         </button>
+        <span
+          className="shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-semibold"
+          style={{ color: meta.color, background: tint(meta.color) }}
+        >
+          {meta.label}
+        </span>
         <div className="w-24 shrink-0">
           <ProgressBar counts={feature.task_counts} />
-        </div>
-        <div className="w-16 shrink-0">
-          <AssigneesCell />
         </div>
       </div>
       {expanded && (
@@ -251,8 +302,8 @@ function FeatureListView({
       <div className="flex items-center gap-2 border-b border-border px-3 pb-2 text-[10px] uppercase tracking-wide text-text-muted">
         <span className="w-3.5 shrink-0" />
         <span className="flex-1">Feature</span>
+        <span className="w-20 shrink-0">Stage</span>
         <span className="w-24 shrink-0">Progress</span>
-        <span className="w-16 shrink-0">Assignees</span>
       </div>
       {groups.map(([status, groupFeatures]) => (
         <FeatureStatusSection
@@ -274,18 +325,31 @@ function FeatureCard({
   feature: FeatureSummary;
   onOpen: (feature: FeatureSummary) => void;
 }) {
+  const meta = lifecycleMeta(feature.status);
   return (
     <button
       type="button"
       title={feature.next_action || feature.current_stage}
       onClick={() => onOpen(feature)}
-      className="flex w-full flex-col gap-2 rounded-md border border-border bg-surface px-3 py-2.5 text-left hover:bg-surface-secondary"
+      className="flex w-full flex-col rounded-md border border-border bg-surface px-3 py-2.5 text-left hover:bg-surface-secondary"
     >
-      <span className="min-w-0 truncate text-xs font-medium text-text-primary">
-        {feature.feature_name || feature.title || feature.id}
+      {/* digital-factory-ui's kanban card shows a short mono id above the
+          title, since its own `id` is a human-readable slug from YAML — this
+          app's FeatureSummary.id is a raw backend UUID instead, so showing it
+          here would just be meaningless noise; the name is the only useful
+          identity we have, shown once. */}
+      <div className="mb-2.5 flex items-center gap-1.5">
+        <LifecycleGlyph stage={feature.status} size={12} />
+        <p className="min-w-0 flex-1 truncate text-xs font-medium leading-snug text-text-primary">
+          {feature.feature_name || feature.title || feature.id}
+        </p>
+      </div>
+      <span
+        className="w-fit shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+        style={{ color: meta.color, background: tint(meta.color) }}
+      >
+        {meta.label}
       </span>
-      <ProgressBar counts={feature.task_counts} />
-      <AssigneesCell />
     </button>
   );
 }
@@ -346,7 +410,7 @@ export function FeaturesBrowser() {
   const [features, setFeatures] = useState<FeatureSummary[] | null>(null);
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [query, setQuery] = useState('');
-  const [activeChips, setActiveChips] = useState<Set<FilterChip>>(new Set());
+  const [activeChips, setActiveChips] = useState<Set<string>>(new Set());
   const [view, setView] = useState<ViewMode>('list');
 
   useEffect(() => {
@@ -364,7 +428,15 @@ export function FeaturesBrowser() {
   const openFeatureDetail = (feature: FeatureSummary) =>
     vscode.postMessage({ command: 'openFeatureDetail', feature });
 
-  const toggleChip = (chip: FilterChip) =>
+  /** Switching view resets quick filters — the two filter sets are different
+   * axes (task status vs lifecycle stage), so carrying one over as if it
+   * still applied to the other view would silently misfilter it. */
+  const changeView = (next: ViewMode) => {
+    setView(next);
+    setActiveChips(new Set());
+  };
+
+  const toggleChip = (chip: string) =>
     setActiveChips((prev) => {
       const next = new Set(prev);
       if (next.has(chip)) next.delete(chip);
@@ -376,8 +448,10 @@ export function FeaturesBrowser() {
     () =>
       (features ?? [])
         .filter((f) => matchesQuery(f, query))
-        .filter((f) => matchesChips(f, activeChips)),
-    [features, query, activeChips],
+        .filter((f) =>
+          view === 'list' ? matchesListChips(f, activeChips) : matchesGridChips(f, activeChips),
+        ),
+    [features, query, activeChips, view],
   );
 
   const tasksByFeatureId = useMemo(() => {
@@ -394,7 +468,7 @@ export function FeaturesBrowser() {
     <div className="flex h-full flex-col overflow-hidden">
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3">
         <span className="text-sm font-semibold text-text-primary">Features</span>
-        <FilterChips active={activeChips} onToggle={toggleChip} />
+        <FilterChips mode={view} active={activeChips} onToggle={toggleChip} />
         <div className="ml-auto flex items-center gap-2">
           <div className="flex min-w-0 max-w-xs flex-1 items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-1">
             <Search className="h-3 w-3 shrink-0 text-text-muted" aria-hidden="true" />
@@ -410,7 +484,7 @@ export function FeaturesBrowser() {
             <button
               type="button"
               title="List view"
-              onClick={() => setView('list')}
+              onClick={() => changeView('list')}
               className={
                 'p-1.5 ' +
                 (view === 'list'
@@ -423,7 +497,7 @@ export function FeaturesBrowser() {
             <button
               type="button"
               title="Grid view"
-              onClick={() => setView('grid')}
+              onClick={() => changeView('grid')}
               className={
                 'p-1.5 ' +
                 (view === 'grid'

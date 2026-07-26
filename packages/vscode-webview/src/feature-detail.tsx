@@ -1,6 +1,7 @@
 import {
   Activity as ActivityIcon,
   Bot,
+  Check,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -8,8 +9,12 @@ import {
   CircleDashed,
   CircleMinus,
   CircleX,
+  Code2,
   ExternalLink,
+  FileText,
   Filter,
+  ListChecks,
+  Rocket,
   RotateCcw,
   Unlock,
   X,
@@ -19,8 +24,8 @@ import { marked } from 'marked';
 import type { ComponentType, MouseEvent } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { TaskStatusGlyph } from './components/status-glyph.tsx';
-import { lifecycleMeta, taskStatusMeta, tint } from './utils/feature-meta.ts';
+import { StatusPill, TaskStatusGlyph } from './components/status-glyph.tsx';
+import { lifecycleMeta, tint } from './utils/feature-meta.ts';
 import { deriveIconColor } from './utils/icon-colors.ts';
 import { getInitialFeature } from './utils/panel-context.ts';
 import type {
@@ -38,12 +43,22 @@ const vscode = getVsCodeApi();
 type BaseTabKey = 'product_spec' | 'tech_design' | 'tasks' | 'handoff' | 'activity';
 type TabKey = BaseTabKey | `task:${string}`;
 
-const BASE_TABS: { key: BaseTabKey; label: string }[] = [
-  { key: 'product_spec', label: 'Product Spec' },
-  { key: 'tech_design', label: 'Tech Design' },
-  { key: 'tasks', label: 'Tasks' },
-  { key: 'handoff', label: 'Handoff' },
-  { key: 'activity', label: 'Activity' },
+/** `stageKey` is the key this tab's approval state is looked up under in
+ * FeatureSummary.stages — digital-factory-ui's own backend key for the tech
+ * design stage is "technical_design", not "tech_design" (the extension's own
+ * tab key/doc filename convention), so the two must be mapped explicitly
+ * rather than assumed equal. */
+const BASE_TABS: {
+  key: BaseTabKey;
+  label: string;
+  icon: ComponentType<{ className?: string; 'aria-hidden'?: boolean | 'true' | 'false' }>;
+  stageKey?: string;
+}[] = [
+  { key: 'product_spec', label: 'Product Spec', icon: FileText, stageKey: 'product_spec' },
+  { key: 'tech_design', label: 'Tech Design', icon: Code2, stageKey: 'technical_design' },
+  { key: 'tasks', label: 'Tasks', icon: ListChecks, stageKey: 'tasks' },
+  { key: 'handoff', label: 'Handoff', icon: Rocket, stageKey: 'handoff' },
+  { key: 'activity', label: 'Activity', icon: ActivityIcon },
 ];
 
 interface DetailState {
@@ -115,14 +130,14 @@ function actionMeta(action: string) {
 function ActorAvatar({ actor, actorId }: { actor: string; actorId?: string }) {
   if (actor.toLowerCase() === 'orchestrator') {
     return (
-      <span className="mt-0.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full bg-warning/20 text-warning">
+      <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full bg-warning/20 text-warning">
         <Bot className="h-3 w-3" aria-hidden="true" />
       </span>
     );
   }
   return (
     <span
-      className="mt-0.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full text-[9px] font-semibold text-white"
+      className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full text-[9px] font-semibold text-white"
       style={{ background: deriveIconColor(actorId ?? actor ?? '?') }}
     >
       {initial(actor || '?')}
@@ -201,16 +216,22 @@ function ActivityTimeline({ events, tasks }: { events: ActivityEvent[]; tasks: T
         <div className="text-xs text-text-muted">No activity yet.</div>
       ) : (
         <div className="relative flex flex-col gap-2 pl-1">
-          <div className="absolute bottom-3 left-[9px] top-3 w-px bg-border" aria-hidden="true" />
+          {/* left-[13px]: the row's dot circle (h-[18px] w-[18px], centered at
+              +9px from its own left edge) sits inside this container's pl-1
+              (4px) padding in normal flow, but `left` on an absolutely
+              positioned element is measured from the padding EDGE (i.e.
+              ignores the parent's own padding) — so the line needs that same
+              4px added back (4 + 9 = 13) to actually land under the dots'
+              center instead of 4px to their left. */}
+          <div className="absolute bottom-3 left-[13px] top-3 w-px bg-border" aria-hidden="true" />
           {filtered.map((e, i) => {
             const task = e.task_id ? taskById.get(e.task_id) : undefined;
             const meta = actionMeta(e.action);
             const Icon = meta.icon;
-            const pillMeta = task ? taskStatusMeta(task.status) : null;
             return (
-              <div key={i} className="relative flex gap-2.5">
+              <div key={i} className="relative flex items-center gap-2.5">
                 <span
-                  className="relative z-[1] mt-0.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full bg-surface"
+                  className="relative z-[1] flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full bg-surface"
                   style={{ color: meta.color }}
                 >
                   <Icon size={16} />
@@ -242,20 +263,13 @@ function ActivityTimeline({ events, tasks }: { events: ActivityEvent[]; tasks: T
                       <span className="text-[10px] text-text-muted">
                         {formatTimestamp(e.occurred_at)}
                       </span>
-                      {pillMeta && (
-                        <span
-                          className="rounded-full px-2 py-0.5 text-[10px] font-semibold"
-                          style={{ color: pillMeta.color, background: tint(pillMeta.color) }}
-                        >
-                          {pillMeta.label}
-                        </span>
-                      )}
+                      {task && <StatusPill status={task.status} />}
                     </div>
                   </div>
                   {e.note && (
-                    <div className="mt-0.5 flex items-start gap-1 text-[11px] text-text-muted">
+                    <div className="mt-0.5 flex min-w-0 items-start gap-1 text-[11px] text-text-muted">
                       <ChevronRight className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
-                      <span>{e.note}</span>
+                      <span className="min-w-0 break-words">{e.note}</span>
                     </div>
                   )}
                 </div>
@@ -280,32 +294,24 @@ function TaskList({
   }
   return (
     <div className="flex flex-col gap-1">
-      {tasks.map((t, i) => {
-        const meta = taskStatusMeta(t.status);
-        return (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => onOpen(t)}
-            title={t.next_action || undefined}
-            className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left hover:bg-surface-secondary"
-          >
-            <TaskStatusGlyph status={t.status} />
-            <span className="shrink-0 rounded bg-surface-secondary px-1.5 py-0.5 text-[10px] font-semibold text-text-secondary">
-              T{i + 1}
-            </span>
-            <span className="min-w-0 flex-1 truncate text-xs font-medium text-text-primary">
-              {t.title || t.task_name}
-            </span>
-            <span
-              className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold"
-              style={{ color: meta.color, background: tint(meta.color) }}
-            >
-              {meta.label}
-            </span>
-          </button>
-        );
-      })}
+      {tasks.map((t, i) => (
+        <button
+          key={t.id}
+          type="button"
+          onClick={() => onOpen(t)}
+          title={t.next_action || undefined}
+          className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left hover:bg-surface-secondary"
+        >
+          <TaskStatusGlyph status={t.status} />
+          <span className="shrink-0 rounded bg-surface-secondary px-1.5 py-0.5 text-[10px] font-semibold text-text-secondary">
+            T{i + 1}
+          </span>
+          <span className="min-w-0 flex-1 truncate text-xs font-medium text-text-primary">
+            {t.title || t.task_name}
+          </span>
+          <StatusPill status={t.status} />
+        </button>
+      ))}
     </div>
   );
 }
@@ -432,7 +438,6 @@ function TaskDetailTab({
   if (!detail) {
     return <div className="p-4 text-xs text-text-muted">Loading…</div>;
   }
-  const meta = taskStatusMeta(detail.status);
   const isHuman = detail.execution?.actor_type === 'human';
 
   return (
@@ -445,12 +450,7 @@ function TaskDetailTab({
           <span className="rounded bg-surface-secondary px-1.5 py-0.5 text-[10px] font-medium text-text-muted">
             {isHuman ? 'Human' : 'Agent'}
           </span>
-          <span
-            className="rounded-full px-2 py-0.5 text-[10px] font-semibold"
-            style={{ color: meta.color, background: tint(meta.color) }}
-          >
-            {meta.label}
-          </span>
+          <StatusPill status={detail.status} />
         </div>
         <h2 className="mt-1.5 truncate text-sm font-semibold text-text-primary">
           {detail.title || detail.task_name}
@@ -510,13 +510,26 @@ function prNumber(url: string | null): string {
   return m ? `#${m[1]}` : url;
 }
 
+/** Keyed on the ACTUAL backend conflict-state/PR-status values (matching
+ * digital-factory-ui's HandoffPRStatus/HandoffConflictState unions) —
+ * 'conflicted', not 'conflicting'. 'closed'/'none' are extension-only
+ * extras with no dfui counterpart. */
 const PILL_COLORS: Record<string, string> = {
   open: 'var(--color-primary)',
   merged: 'var(--color-purple)',
   closed: 'var(--color-text-muted)',
   resolved: 'var(--color-success)',
-  conflicting: 'var(--color-danger)',
+  resolving: 'var(--color-warning)',
+  conflicted: 'var(--color-danger)',
   none: 'var(--color-text-muted)',
+};
+
+const PILL_DOTS: Record<string, string> = {
+  merged: '🟣',
+  open: '🟡',
+  conflicted: '🔴',
+  resolving: '🟠',
+  resolved: '🟢',
 };
 
 function pillColor(value: string): string {
@@ -525,11 +538,13 @@ function pillColor(value: string): string {
 
 function Pill({ value }: { value: string }) {
   const color = pillColor(value);
+  const dot = PILL_DOTS[value.toLowerCase()];
   return (
     <span
-      className="rounded-full px-2 py-0.5 text-[10px] font-semibold capitalize"
+      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold capitalize"
       style={{ color, background: tint(color) }}
     >
+      {dot && <span aria-hidden="true">{dot}</span>}
       {value}
     </span>
   );
@@ -701,27 +716,34 @@ export function FeatureDetail() {
       </div>
 
       <div className="flex gap-1 overflow-x-auto border-b border-border px-2 pt-1">
-        {BASE_TABS.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            onClick={() => setTab(t.key)}
-            className={
-              'shrink-0 rounded-t px-3 py-1.5 text-xs font-medium ' +
-              (tab === t.key
-                ? 'border-b-2 border-accent text-text-primary'
-                : 'text-text-muted hover:text-text-primary')
-            }
-          >
-            {t.label}
-            {t.key === 'activity' && state.activity.length > 0 && (
-              <span className="ml-1.5 text-text-muted">{state.activity.length}</span>
-            )}
-            {t.key === 'tasks' && state.tasks.length > 0 && (
-              <span className="ml-1.5 text-text-muted">{state.tasks.length}</span>
-            )}
-          </button>
-        ))}
+        {BASE_TABS.map((t) => {
+          const Icon = t.icon;
+          const approved = t.stageKey
+            ? feature.stages?.[t.stageKey]?.review_status === 'approved'
+            : false;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setTab(t.key)}
+              className={
+                'flex shrink-0 items-center gap-1.5 rounded-t px-3 py-1.5 text-xs font-medium ' +
+                (tab === t.key
+                  ? 'border-b-2 border-accent text-text-primary'
+                  : 'text-text-muted hover:text-text-primary')
+              }
+            >
+              <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+              {t.label}
+              {approved && <Check className="h-3 w-3 text-success" aria-hidden="true" />}
+              {t.key === 'activity' && (
+                <span className="rounded-full bg-chip-bg px-1.5 text-[10px] font-semibold text-text-muted">
+                  {state.activity.length}
+                </span>
+              )}
+            </button>
+          );
+        })}
         {openTaskIds.map((taskId) => {
           const index = state.tasks.findIndex((t) => t.id === taskId) + 1;
           const key: TabKey = `task:${taskId}`;

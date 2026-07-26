@@ -24,12 +24,16 @@ export type {
   VersionEntry,
 };
 
-/** A repo symlinked into the current org's workspace folder (see the
- * extension host's src/workspace/repoLinker.ts) — `target` is the real path
- * the symlink resolves to, shown as a hint of where the actual clone lives. */
+/** One repo the current workspace tracks (see the extension host's
+ * src/navigator/workflow-api.ts getWorkspaceRepos), cross-referenced against
+ * what's actually symlinked into the local workspace folder (see
+ * src/workspace/repoLinker.ts) — `linked` is false when the workspace knows
+ * about this repo but no local clone has been linked yet, in which case
+ * `target` is absent. */
 export interface LinkedRepo {
   name: string;
-  target: string;
+  target?: string;
+  linked: boolean;
 }
 
 /** Local coding agents the extension knows how to register actorium-mcp

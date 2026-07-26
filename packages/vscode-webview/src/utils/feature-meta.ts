@@ -10,7 +10,7 @@ export const FEATURE_LIFECYCLE_META: Record<string, { label: string; color: stri
   backlog: { label: 'Backlog', color: 'var(--color-text-muted)' },
   in_design: { label: 'In Design', color: 'var(--color-warning)' },
   in_tdd: { label: 'In TDD', color: 'var(--color-purple)' },
-  ready_for_implementation: { label: 'Ready', color: 'var(--color-warning)' },
+  ready_for_implementation: { label: 'Ready for Impl.', color: 'var(--color-warning)' },
   in_implementation: { label: 'In Implementation', color: 'var(--color-primary)' },
   in_handoff: { label: 'In Handoff', color: 'var(--color-warning)' },
   done: { label: 'Done', color: 'var(--color-success)' },

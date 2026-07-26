@@ -22,6 +22,7 @@ import { openWorkspaceDocument } from './open-document.js';
 import {
   codingApiConfig,
   type CodingApiContext,
+  getWorkspaceRepos,
   listDocuments,
   listFeatures,
 } from './workflow-api.js';
@@ -182,10 +183,41 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
     );
   }
 
+  /**
+   * Merges the workspace's actual repo list (from workflow-backend) with
+   * what's really symlinked into the local workspace folder, so the sidebar
+   * can show which of the workspace's repos still need linking rather than
+   * just listing whatever happens to be on disk. Falls back to disk-only
+   * (every entry `linked: true`, as before this cross-reference existed) if
+   * the API call fails — offline shouldn't blank out a working local list.
+   */
   private async _loadRepos(): Promise<void> {
     const workspaceId = this.getWorkspaceId();
     const folder = workspaceId ? getWorkspaceFolder(this.context, workspaceId) : undefined;
-    const repos = folder ? await listLinkedRepos(folder) : [];
+    const [linked, workspaceRepos] = await Promise.all([
+      folder ? listLinkedRepos(folder) : Promise.resolve([]),
+      workspaceId
+        ? getWorkspaceRepos(codingApiConfig(this.codingApiCtx), workspaceId)
+        : Promise.resolve(null),
+    ]);
+
+    const linkedByName = new Map(linked.map((r) => [r.name.toLowerCase(), r]));
+    const seen = new Set<string>();
+    const repos: { name: string; target?: string; linked: boolean }[] = [];
+
+    for (const wr of workspaceRepos ?? []) {
+      const local = linkedByName.get(wr.repo_id.toLowerCase());
+      seen.add(wr.repo_id.toLowerCase());
+      repos.push({ name: wr.repo_id, target: local?.target, linked: !!local });
+    }
+    // Any locally-linked repo the workspace API doesn't know about (linked
+    // before being registered workspace-side, or an unrelated folder) still
+    // shows up, same as before this cross-reference existed.
+    for (const r of linked) {
+      if (!seen.has(r.name.toLowerCase()))
+        repos.push({ name: r.name, target: r.target, linked: true });
+    }
+
     this._postMessage({ command: 'reposLoaded', repos, hasWorkspaceFolder: !!folder });
   }
 

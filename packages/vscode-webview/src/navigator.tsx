@@ -70,6 +70,7 @@ export function Navigator() {
               repos={c.repos}
               hasWorkspaceFolder={c.hasWorkspaceFolder}
               onOpenWorkspaceFolder={c.openWorkspaceFolder}
+              onAddRepo={c.addRepo}
               mcpCliStatus={c.mcpCliStatus}
               mcpCliInstalling={c.mcpCliInstalling}
               onInstallMcpCli={c.installMcpCli}

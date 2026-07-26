@@ -1,4 +1,21 @@
-import { AtSign, Code2, File, FileText, Folder, ListChecks, Rocket } from 'lucide-react';
+import {
+  AtSign,
+  Braces,
+  Code2,
+  Container,
+  File,
+  FileArchive,
+  FileJson,
+  FileText,
+  Folder,
+  GitBranch,
+  Image as ImageIcon,
+  Info,
+  KeyRound,
+  ListChecks,
+  Rocket,
+  ScrollText,
+} from 'lucide-react';
 import { type ComponentType, type ReactNode, useState } from 'react';
 
 import type { FeatureSummary, StorageDocument } from '../utils/types.ts';
@@ -36,6 +53,60 @@ const PATH_ICONS: Record<
   'tasks.md': ListChecks,
   'handoff.md': Rocket,
 };
+
+type FileStyle = {
+  icon: ComponentType<{ className?: string; 'aria-hidden'?: boolean | 'true' | 'false' }>;
+  color: string;
+};
+
+// Ported verbatim from digital-factory-ui's folder-tree-sidebar.tsx
+// BASENAME_STYLES/EXTENSION_STYLES — per-file-type icon + color for any doc
+// outside the 4 canonical ones above, which DocRow's plain fallback File
+// icon used to flatten to one muted gray regardless of type.
+const BASENAME_STYLES: Record<string, FileStyle> = {
+  Dockerfile: { icon: Container, color: 'text-sky-400' },
+  Makefile: { icon: FileText, color: 'text-red-400' },
+  'README.md': { icon: Info, color: 'text-sky-300' },
+  '.gitignore': { icon: GitBranch, color: 'text-orange-400' },
+  'go.mod': { icon: Braces, color: 'text-cyan-400' },
+  'go.sum': { icon: ScrollText, color: 'text-cyan-600' },
+  'package.json': { icon: FileJson, color: 'text-yellow-400' },
+  'LICENSE.md': { icon: KeyRound, color: 'text-yellow-500' },
+  LICENSE: { icon: KeyRound, color: 'text-yellow-500' },
+};
+
+const EXTENSION_STYLES: Record<string, FileStyle> = {
+  md: { icon: FileText, color: 'text-sky-300' },
+  ts: { icon: Code2, color: 'text-blue-400' },
+  tsx: { icon: Code2, color: 'text-blue-400' },
+  js: { icon: Code2, color: 'text-yellow-400' },
+  jsx: { icon: Code2, color: 'text-yellow-400' },
+  go: { icon: Code2, color: 'text-cyan-400' },
+  py: { icon: Code2, color: 'text-green-400' },
+  json: { icon: FileJson, color: 'text-yellow-500' },
+  yaml: { icon: Braces, color: 'text-purple-400' },
+  yml: { icon: Braces, color: 'text-purple-400' },
+  png: { icon: ImageIcon, color: 'text-purple-400' },
+  jpg: { icon: ImageIcon, color: 'text-purple-400' },
+  jpeg: { icon: ImageIcon, color: 'text-purple-400' },
+  gif: { icon: ImageIcon, color: 'text-purple-400' },
+  svg: { icon: ImageIcon, color: 'text-purple-400' },
+  webp: { icon: ImageIcon, color: 'text-purple-400' },
+  pdf: { icon: FileText, color: 'text-red-400' },
+  zip: { icon: FileArchive, color: 'text-orange-400' },
+  tar: { icon: FileArchive, color: 'text-orange-400' },
+  gz: { icon: FileArchive, color: 'text-orange-400' },
+};
+
+function styleForBasename(basename: string): FileStyle {
+  return (
+    BASENAME_STYLES[basename] ??
+    EXTENSION_STYLES[(basename.split('.').pop() ?? '').toLowerCase()] ?? {
+      icon: File,
+      color: 'text-text-muted',
+    }
+  );
+}
 
 interface TreeFolder {
   name: string;
@@ -122,7 +193,9 @@ function DocRow({
   onTagInPrompt: (text: string) => void;
 }) {
   const basename = basenameOf(doc.path);
-  const Icon = PATH_ICONS[basename] ?? File;
+  const canonicalIcon = PATH_ICONS[basename];
+  const style = canonicalIcon ? undefined : styleForBasename(basename);
+  const Icon = canonicalIcon ?? style!.icon;
   return (
     <div className="group flex w-full items-center gap-1.5 rounded-md pr-1 hover:bg-surface-secondary">
       <button
@@ -135,7 +208,10 @@ function DocRow({
             row's icon lines up under a sibling folder row's icon rather than
             starting further left where folders have no chevron. */}
         <span className="inline-block w-3 shrink-0" aria-hidden="true" />
-        <Icon className="h-3.5 w-3.5 shrink-0 text-text-muted" aria-hidden="true" />
+        <Icon
+          className={`h-3.5 w-3.5 shrink-0 ${canonicalIcon ? 'text-text-muted' : style!.color}`}
+          aria-hidden="true"
+        />
         <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
           {labelForDoc(doc)}
         </span>
