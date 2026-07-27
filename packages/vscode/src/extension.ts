@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import { AuthManager } from './auth/oauth.js';
 import {
   type ActoriumEnvironment,
+  ENVIRONMENTS,
   getActoriumConfig,
   getSelectedEnvironment,
   initEnvironmentStore,
@@ -268,36 +269,84 @@ async function addMcpServer(): Promise<void> {
 }
 
 interface ServerItem extends vscode.QuickPickItem {
-  environment: ActoriumEnvironment;
+  environment?: ActoriumEnvironment;
+  isCustomAction?: boolean;
 }
 
-const SERVER_ITEMS: ReadonlyArray<Omit<ServerItem, 'label'> & { label: string }> = [
+/** The only server surfaced as a list item — every other environment (local, abp, sw, …) is
+ * reached via "Select custom server" (promptCustomServer, below) instead, so their names stay
+ * out of a picker anyone browsing the command could otherwise see. */
+const LISTED_SERVERS: ReadonlyArray<{
+  label: string;
+  description: string;
+  environment: ActoriumEnvironment;
+}> = [
   { label: 'Production', description: 'Connect to Actorium Production', environment: 'production' },
-  { label: 'ABP', description: 'Connect to Actorium ABP', environment: 'abp' },
-  { label: 'SW', description: 'Connect to Actorium SW', environment: 'sw' },
-  { label: 'Local', description: 'For Actorium developers only', environment: 'local' },
 ];
+
+/** Environment names not in LISTED_SERVERS — only these are accepted by promptCustomServer. */
+const TYPEABLE_ENVIRONMENTS = (Object.keys(ENVIRONMENTS) as ActoriumEnvironment[]).filter(
+  (env) => !LISTED_SERVERS.some((item) => item.environment === env),
+);
+
+/**
+ * Prompts for a non-Production server by name — kept behind its own step
+ * (rather than listed alongside Production in selectServer() below) so
+ * internal environment names aren't visible to someone just browsing the
+ * picker. Returns undefined if the user cancels.
+ */
+async function promptCustomServer(
+  current: ActoriumEnvironment,
+): Promise<ActoriumEnvironment | undefined> {
+  const input = await vscode.window.showInputBox({
+    title: 'Connect to a custom Actorium server',
+    prompt: 'Server name',
+    value: TYPEABLE_ENVIRONMENTS.includes(current) ? current : '',
+  });
+  if (input === undefined) return undefined;
+
+  const trimmed = input.trim().toLowerCase();
+  if (!TYPEABLE_ENVIRONMENTS.includes(trimmed as ActoriumEnvironment)) {
+    void vscode.window.showErrorMessage(`Actorium: Unknown server "${input}".`);
+    return undefined;
+  }
+  return trimmed as ActoriumEnvironment;
+}
 
 /**
  * Prompts for which Actorium server to connect to — this used to be the
  * `actorium.environment` Settings entry; it's now an explicit step shown
  * right before the device flow starts (see connectWithServerSelection())
- * instead of a setting a user has to go dig up. Returns false if the user
- * cancels, so callers can abort the login instead of proceeding with
- * whatever was previously selected.
+ * instead of a setting a user has to go dig up. Only Production is listed;
+ * everything else is reached through "Select custom server" and its own
+ * input box (see promptCustomServer above). Returns false if the user
+ * cancels either step, so callers can abort the login instead of proceeding
+ * with whatever was previously selected.
  */
 async function selectServer(): Promise<boolean> {
   const current = getSelectedEnvironment();
-  const items: ServerItem[] = SERVER_ITEMS.map((item) => ({
-    ...item,
-    label: item.environment === current ? `$(check) ${item.label}` : item.label,
-  }));
-  const picked = await vscode.window.showQuickPick(items, {
-    placeHolder: 'Select the Actorium server to connect to',
-  });
+  const isCustomCurrent = !LISTED_SERVERS.some((item) => item.environment === current);
+  const items: ServerItem[] = [
+    ...LISTED_SERVERS.map((item) => ({
+      ...item,
+      label: item.environment === current ? `$(check) ${item.label}` : item.label,
+    })),
+    {
+      label: isCustomCurrent ? '$(check) Select custom server…' : 'Select custom server…',
+      description: isCustomCurrent ? `Currently: ${current}` : 'Custom Actorium servers',
+      isCustomAction: true,
+    },
+  ];
+
+  const picked = await vscode.window.showQuickPick(items, { title: 'Connect to Actorium' });
   if (!picked) return false;
 
-  await setSelectedEnvironment(picked.environment);
+  const environment = picked.isCustomAction
+    ? await promptCustomServer(current)
+    : picked.environment;
+  if (!environment) return false;
+
+  await setSelectedEnvironment(environment);
   await authManager.switchEnvironment(getActoriumConfig().bffUrl);
   return true;
 }
