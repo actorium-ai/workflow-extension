@@ -72,7 +72,8 @@ interface RepoCandidate {
 
 /** Symlinks one candidate into the workspace folder, prompting to replace an
  * existing entry of the same name rather than silently clobbering it.
- * Returns undefined if the user declines the replace confirmation. */
+ * Returns undefined if the user declines the replace confirmation. Throws
+ * (caller catches, see addRepo) if the link itself can't be created. */
 async function linkOneRepo(
   workspaceFolderPath: string,
   candidate: RepoCandidate,
@@ -88,7 +89,29 @@ async function linkOneRepo(
     await fs.rm(linkPath, { recursive: true, force: true });
   }
 
-  await fs.symlink(candidate.path, linkPath, 'dir');
+  try {
+    await fs.symlink(candidate.path, linkPath, 'dir');
+  } catch (err) {
+    // A directory symlink needs SeCreateSymbolicLinkPrivilege (elevation) or
+    // Developer Mode on Windows; a junction links a directory without
+    // either requirement, so retry with one before giving up — every link
+    // made here is always a directory, so junction semantics are fine.
+    if (process.platform === 'win32' && (err as NodeJS.ErrnoException)?.code === 'EPERM') {
+      try {
+        await fs.symlink(candidate.path, linkPath, 'junction');
+      } catch (junctionErr) {
+        throw new Error(
+          `Couldn't link "${candidate.name}": creating a linked folder on Windows requires ` +
+            `Developer Mode (Settings → Privacy & security → For developers) or running VS Code ` +
+            `as Administrator. (${junctionErr instanceof Error ? junctionErr.message : junctionErr})`,
+        );
+      }
+    } else {
+      throw new Error(
+        `Couldn't link "${candidate.name}": ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
   return { name: candidate.name, target: candidate.path, isSymlink: true };
 }
 
@@ -162,7 +185,15 @@ export async function addRepo(
 
   const results: LinkedRepo[] = [];
   for (const candidate of candidates) {
-    const linked = await linkOneRepo(workspaceFolderPath, candidate);
+    let linked: LinkedRepo | undefined;
+    try {
+      linked = await linkOneRepo(workspaceFolderPath, candidate);
+    } catch (err) {
+      vscode.window.showErrorMessage(
+        `Actorium: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      continue;
+    }
     if (!linked) continue;
     const known = await resolveAndRecordRepoLink(
       workspaceFolderPath,

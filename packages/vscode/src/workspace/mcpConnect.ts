@@ -7,6 +7,20 @@ import { promisify } from 'util';
 
 const execFile = promisify(execFileCb);
 
+/**
+ * Runs an external CLI, shell-wrapped on Windows only. npm/claude/codex/
+ * actorium-mcp all resolve to `.cmd` shims there (npm-installed wrapper
+ * scripts, not real .exe binaries), and Windows' CreateProcess can't launch
+ * a `.cmd` directly the way `execFile` invokes a bare command name — it
+ * needs cmd.exe to interpret it, same as typing the command at a real
+ * terminal. Without `shell: true` these fail with ENOENT on Windows even
+ * when correctly installed and on PATH. macOS/Linux binaries are real
+ * executables already, so this is a no-op there.
+ */
+function runCli(cmd: string, args: string[], opts: { cwd?: string; env?: NodeJS.ProcessEnv } = {}) {
+  return execFile(cmd, args, { ...opts, shell: process.platform === 'win32' });
+}
+
 export interface McpConnectResult {
   ok: boolean;
   message: string;
@@ -36,6 +50,19 @@ function envArg(bffUrl: string): string {
   return `API_URL=${bffUrl}`;
 }
 
+/** pnpm's own default global dir per OS (used when PNPM_HOME isn't set in
+ * the environment VS Code inherited) — matches pnpm's installer/docs, not
+ * just the macOS path this used to hardcode. */
+function defaultPnpmHome(): string {
+  if (process.platform === 'win32') {
+    return process.env.LOCALAPPDATA
+      ? path.join(process.env.LOCALAPPDATA, 'pnpm')
+      : path.join(os.homedir(), 'AppData', 'Local', 'pnpm');
+  }
+  if (process.platform === 'linux') return path.join(os.homedir(), '.local', 'share', 'pnpm');
+  return path.join(os.homedir(), 'Library', 'pnpm');
+}
+
 /**
  * Ensures pnpm's global bin dir is on PATH for CLI subprocesses we spawn,
  * regardless of whether the calling shell ever sourced `~/.zshrc` (the same
@@ -46,7 +73,7 @@ function envArg(bffUrl: string): string {
  * binary is actually linked and working.
  */
 export function envWithPnpmBin(): NodeJS.ProcessEnv {
-  const pnpmHome = process.env.PNPM_HOME || path.join(os.homedir(), 'Library', 'pnpm');
+  const pnpmHome = process.env.PNPM_HOME || defaultPnpmHome();
   const currentPath = process.env.PATH ?? '';
   const alreadyPresent = currentPath.split(path.delimiter).includes(pnpmHome);
   return {
@@ -85,7 +112,7 @@ export interface McpCliStatus {
  */
 export async function getMcpCliStatus(): Promise<McpCliStatus> {
   try {
-    const { stdout } = await execFile(MCP_BIN, ['--version'], { env: envWithPnpmBin() });
+    const { stdout } = await runCli(MCP_BIN, ['--version'], { env: envWithPnpmBin() });
     return { installed: true, version: stdout.trim() };
   } catch {
     return { installed: false };
@@ -101,7 +128,7 @@ export async function getMcpCliStatus(): Promise<McpCliStatus> {
  */
 export async function installMcpCli(npmPackage: string): Promise<McpConnectResult> {
   try {
-    await execFile('npm', ['install', '-g', npmPackage]);
+    await runCli('npm', ['install', '-g', npmPackage]);
     return { ok: true, message: `Installed "${npmPackage}" globally via npm.` };
   } catch (err) {
     return { ok: false, message: cliErrorMessage('npm', err) };
@@ -130,7 +157,7 @@ export async function connectClaudeCode(cwd: string, bffUrl: string): Promise<Mc
     MCP_BIN,
   ];
   try {
-    await execFile('claude', args, { cwd });
+    await runCli('claude', args, { cwd });
     return { ok: true, message: `Registered "${MCP_SERVER_NAME}" with Claude Code (local scope).` };
   } catch (err) {
     return { ok: false, message: cliErrorMessage('claude', err) };
@@ -139,7 +166,7 @@ export async function connectClaudeCode(cwd: string, bffUrl: string): Promise<Mc
 
 export async function disconnectClaudeCode(cwd: string): Promise<McpConnectResult> {
   try {
-    await execFile('claude', ['mcp', 'remove', MCP_SERVER_NAME, '--scope', 'local'], { cwd });
+    await runCli('claude', ['mcp', 'remove', MCP_SERVER_NAME, '--scope', 'local'], { cwd });
     return { ok: true, message: `Removed "${MCP_SERVER_NAME}" from Claude Code (local scope).` };
   } catch (err) {
     return { ok: false, message: cliErrorMessage('claude', err) };
@@ -155,7 +182,7 @@ export async function disconnectClaudeCode(cwd: string): Promise<McpConnectResul
  */
 export async function getClaudeCodeStatus(cwd: string): Promise<AgentStatus> {
   try {
-    const { stdout } = await execFile('claude', ['mcp', 'get', MCP_SERVER_NAME], {
+    const { stdout } = await runCli('claude', ['mcp', 'get', MCP_SERVER_NAME], {
       cwd,
       env: envWithPnpmBin(),
     });
@@ -181,7 +208,7 @@ export async function getClaudeCodeStatus(cwd: string): Promise<AgentStatus> {
 export async function connectCodex(cwd: string, bffUrl: string): Promise<McpConnectResult> {
   const args = ['mcp', 'add', MCP_SERVER_NAME, '--env', envArg(bffUrl), '--', MCP_BIN];
   try {
-    await execFile('codex', args, { cwd });
+    await runCli('codex', args, { cwd });
     return { ok: true, message: `Registered "${MCP_SERVER_NAME}" with Codex.` };
   } catch (err) {
     return { ok: false, message: cliErrorMessage('codex', err) };
@@ -190,7 +217,7 @@ export async function connectCodex(cwd: string, bffUrl: string): Promise<McpConn
 
 export async function disconnectCodex(cwd: string): Promise<McpConnectResult> {
   try {
-    await execFile('codex', ['mcp', 'remove', MCP_SERVER_NAME], { cwd });
+    await runCli('codex', ['mcp', 'remove', MCP_SERVER_NAME], { cwd });
     return { ok: true, message: `Removed "${MCP_SERVER_NAME}" from Codex.` };
   } catch (err) {
     return { ok: false, message: cliErrorMessage('codex', err) };
@@ -206,7 +233,7 @@ export async function disconnectCodex(cwd: string): Promise<McpConnectResult> {
  */
 export async function getCodexStatus(cwd: string): Promise<AgentStatus> {
   try {
-    await execFile('codex', ['mcp', 'get', MCP_SERVER_NAME], { cwd, env: envWithPnpmBin() });
+    await runCli('codex', ['mcp', 'get', MCP_SERVER_NAME], { cwd, env: envWithPnpmBin() });
     return { registered: true };
   } catch (err) {
     const combined = `${(err as { stderr?: string })?.stderr ?? ''}${(err as { stdout?: string })?.stdout ?? ''}`;

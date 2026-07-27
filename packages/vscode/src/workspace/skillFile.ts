@@ -71,12 +71,17 @@ own Bash/Read/Edit tools so it works headlessly (no VS Code UI involved).
    - **More than one match** — list every candidate's full path and ask the user which one to
      use. Never guess silently when there's ambiguity.
 
-5. **Create the symlink.** Run:
+5. **Create the symlink.** In a POSIX shell (Linux, macOS, or a Bash tool backed by Git
+   Bash/WSL on Windows), run:
    \`\`\`sh
    ln -s "<candidate-path>" "<workspace-root>/<link-name>"
    \`\`\`
+   In a native Windows shell (cmd.exe/PowerShell, no POSIX layer available) use \`mklink /D\`
+   (Command Prompt) or \`New-Item -ItemType SymbolicLink\` (PowerShell) instead — both need either
+   Developer Mode enabled (Settings → Privacy & security → For developers) or an elevated/Admin
+   shell; without one of those, fall back to a junction (\`mklink /J\`), which needs neither.
    Use the local clone's own directory name as \`<link-name>\` unless the user asked for a
-   different one. Verify with \`ls -la <workspace-root>/<link-name>\` that the symlink was created
+   different one. Verify (\`ls -la\` on POSIX, \`dir\` on Windows) that the symlink was created
    and resolves correctly.
 
 6. **Record the mapping in .actorium/repo-links.json.** Read
