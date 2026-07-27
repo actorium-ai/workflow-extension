@@ -2,7 +2,7 @@
   "name": "actorium-vscode",
   "displayName": "Actorium Agent",
   "description": "Agent-native delivery system",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "publisher": "actorium-ai",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -84,28 +84,6 @@
         "default": {
           "fontPath": "media/actorium-icons.woff",
           "fontCharacter": "\\E001"
-        }
-      }
-    },
-    "configuration": {
-      "title": "Actorium Agent",
-      "properties": {
-        "actorium.environment": {
-          "type": "string",
-          "enum": [
-            "production",
-            "abp",
-            "sw",
-            "local"
-          ],
-          "enumDescriptions": [
-            "Connect to Actorium Production",
-            "Connect to Actorium ABP",
-            "Connect to Actorium SW",
-            "For Actorium developers only"
-          ],
-          "default": "production",
-          "description": "Which Actorium server to connect to."
         }
       }
     }

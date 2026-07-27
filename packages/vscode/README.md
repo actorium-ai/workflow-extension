@@ -41,11 +41,8 @@ manual credential setup.
 | `Actorium: Check for Updates` | Check whether a newer extension version is available |
 | `Actorium: Account` | Open the account menu |
 
-## Settings
-
-| Setting | Description |
-| --- | --- |
-| `actorium.environment` | Which Actorium server to connect to (`production` by default) |
+`Actorium: Connect` (and the Connect button in the Actorium panel) first asks which server to
+connect to (Production, ABP, SW, or Local) before starting the device flow login.
 
 ## License
 

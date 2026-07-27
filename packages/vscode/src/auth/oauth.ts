@@ -45,16 +45,40 @@ export class AuthManager {
   private _onWorkspaceChanged: ((label: string | null) => void) | null = null;
   private _onProfileChanged: ((profile: MeUser | null) => void) | null = null;
 
-  constructor(private readonly context: vscode.ExtensionContext) {
+  /**
+   * The backend this window is currently pointed at (`actorium.bffUrl`,
+   * defaulted from `actorium.environment` — see config/environment.ts).
+   * Every piece of per-login state below (SecretStorage token, workspaceState
+   * org/workspace selection, the on-disk credential file) is keyed off this,
+   * NOT shared globally — two windows on different environments each get
+   * their own independent login, and switching environment in one window
+   * can no longer sign the other one out. See scopedKey()/switchEnvironment().
+   */
+  private _bffUrl: string;
+
+  constructor(
+    private readonly context: vscode.ExtensionContext,
+    bffUrl: string,
+  ) {
+    this._bffUrl = bffUrl;
     // workspaceState (not globalState): scoped per opened folder/window by
     // VS Code itself, so each window remembers its own org/workspace
     // selection independently — opening a second window on a different
     // org's folder no longer fights with whichever workspace the first
-    // window has selected. The login token (secrets, below) stays shared
-    // across windows, which is correct — same login everywhere.
-    this._selectedWorkspaceId = context.workspaceState.get<string>(WORKSPACE_ID_KEY) ?? null;
-    this._selectedWorkspaceLabel = context.workspaceState.get<string>(WORKSPACE_LABEL_KEY) ?? null;
-    this._selectedOrgId = context.workspaceState.get<string>(ORG_ID_KEY) ?? null;
+    // window has selected. Keys are further suffixed with this._bffUrl so a
+    // folder that gets pointed at a different backend later doesn't inherit
+    // a stale org/workspace id that belongs to the previous backend.
+    this._selectedWorkspaceId =
+      context.workspaceState.get<string>(this.scopedKey(WORKSPACE_ID_KEY)) ?? null;
+    this._selectedWorkspaceLabel =
+      context.workspaceState.get<string>(this.scopedKey(WORKSPACE_LABEL_KEY)) ?? null;
+    this._selectedOrgId = context.workspaceState.get<string>(this.scopedKey(ORG_ID_KEY)) ?? null;
+  }
+
+  /** Suffixes a storage key with the currently active backend, so
+   * SecretStorage/workspaceState entries never leak across environments. */
+  private scopedKey(base: string): string {
+    return `${base}::${this._bffUrl}`;
   }
 
   /**
@@ -103,7 +127,7 @@ export class AuthManager {
    * Returns true if a valid token was found.
    */
   async autoConnect(): Promise<boolean> {
-    const stored = await this.context.secrets.get(SECRET_KEY);
+    const stored = await this.context.secrets.get(this.scopedKey(SECRET_KEY));
     if (stored) {
       this._token = stored;
       // Fire-and-forget: primes the account menu's name/email without
@@ -168,9 +192,9 @@ export class AuthManager {
     this._selectedWorkspaceId = workspaceId;
     this._selectedWorkspaceLabel = workspaceLabel;
     this._selectedOrgId = orgId;
-    await this.context.workspaceState.update(WORKSPACE_ID_KEY, workspaceId);
-    await this.context.workspaceState.update(WORKSPACE_LABEL_KEY, workspaceLabel);
-    await this.context.workspaceState.update(ORG_ID_KEY, orgId ?? undefined);
+    await this.context.workspaceState.update(this.scopedKey(WORKSPACE_ID_KEY), workspaceId);
+    await this.context.workspaceState.update(this.scopedKey(WORKSPACE_LABEL_KEY), workspaceLabel);
+    await this.context.workspaceState.update(this.scopedKey(ORG_ID_KEY), orgId ?? undefined);
   }
 
   /**
@@ -274,7 +298,7 @@ export class AuthManager {
         const tokenData = (await tokenResp.json()) as TokenResponse;
 
         this._token = tokenData.access_token;
-        await this.context.secrets.store(SECRET_KEY, tokenData.access_token);
+        await this.context.secrets.store(this.scopedKey(SECRET_KEY), tokenData.access_token);
         await this._syncCredentialFile();
 
         this._stopPolling();
@@ -291,26 +315,27 @@ export class AuthManager {
   }
 
   /**
-   * Mirrors current token/org/workspace state to the shared credential file
-   * workflow-mcp reads (see credentialFile.ts) — called on every state
-   * change (connect, workspace switch, disconnect) that also touches
-   * SecretStorage/workspaceState above, so the file never drifts from what
-   * this class itself considers the source of truth. Note this file is a
-   * single machine-wide file, not scoped per window like workspaceState is
-   * — with multiple windows open on different workspaces, whichever one
-   * last synced "wins" as the default workspace_id/org_id for any
-   * actorium-mcp call that omits them explicitly (every tool still accepts
-   * an explicit workspace_id to override this).
+   * Mirrors current token/org/workspace state to the credential file
+   * workflow-mcp reads for this backend (see credentialFile.ts) — called on
+   * every state change (connect, workspace switch, disconnect, environment
+   * switch) that also touches SecretStorage/workspaceState above, so the
+   * file never drifts from what this class itself considers the source of
+   * truth. The file is keyed by `this._bffUrl`, so multiple windows/
+   * environments each get their own file — the only remaining "last one
+   * wins" case is two windows both pointed at the SAME backend, which
+   * matches workspaceState's own per-folder scoping (every tool still
+   * accepts an explicit workspace_id to override this).
    */
   private async _syncCredentialFile(): Promise<void> {
     if (!this._token) {
-      await deleteCredentialFile();
+      await deleteCredentialFile(this._bffUrl);
       return;
     }
     await writeCredentialFile({
       accessToken: this._token,
       orgId: this._selectedOrgId ?? undefined,
       workspaceId: this._selectedWorkspaceId ?? undefined,
+      bffUrl: this._bffUrl,
       updatedAt: Date.now(),
     });
   }
@@ -323,7 +348,11 @@ export class AuthManager {
   }
 
   /**
-   * Disconnect: clear the stored token.
+   * Disconnect: clear the stored token for the currently active backend
+   * only. Other environments' tokens (this window or any other window) are
+   * untouched — signing out of `production` here doesn't affect a `sw`
+   * session in this same window or a `production` session in another
+   * window.
    */
   async disconnect(): Promise<void> {
     this._token = null;
@@ -331,10 +360,10 @@ export class AuthManager {
     this._selectedWorkspaceLabel = null;
     this._selectedOrgId = null;
     this._userProfile = null;
-    await this.context.secrets.delete(SECRET_KEY);
-    await this.context.workspaceState.update(WORKSPACE_ID_KEY, undefined);
-    await this.context.workspaceState.update(WORKSPACE_LABEL_KEY, undefined);
-    await this.context.workspaceState.update(ORG_ID_KEY, undefined);
+    await this.context.secrets.delete(this.scopedKey(SECRET_KEY));
+    await this.context.workspaceState.update(this.scopedKey(WORKSPACE_ID_KEY), undefined);
+    await this.context.workspaceState.update(this.scopedKey(WORKSPACE_LABEL_KEY), undefined);
+    await this.context.workspaceState.update(this.scopedKey(ORG_ID_KEY), undefined);
     await this._syncCredentialFile();
     vscode.commands.executeCommand('setContext', 'actorium.connected', false);
     vscode.window.showInformationMessage('Actorium: Disconnected.');
@@ -472,13 +501,60 @@ export class AuthManager {
     this._selectedWorkspaceId = picked.workspace.id;
     this._selectedWorkspaceLabel = `${picked.workspace.name} · ${org.organization_name}`;
     this._selectedOrgId = org.organization_id;
-    await this.context.workspaceState.update(WORKSPACE_ID_KEY, this._selectedWorkspaceId);
-    await this.context.workspaceState.update(WORKSPACE_LABEL_KEY, this._selectedWorkspaceLabel);
-    await this.context.workspaceState.update(ORG_ID_KEY, this._selectedOrgId);
+    await this.context.workspaceState.update(
+      this.scopedKey(WORKSPACE_ID_KEY),
+      this._selectedWorkspaceId,
+    );
+    await this.context.workspaceState.update(
+      this.scopedKey(WORKSPACE_LABEL_KEY),
+      this._selectedWorkspaceLabel,
+    );
+    await this.context.workspaceState.update(this.scopedKey(ORG_ID_KEY), this._selectedOrgId);
     await this._syncCredentialFile();
     vscode.window.showInformationMessage(
       `Actorium: Using workspace "${picked.workspace.name}" in "${org.organization_name}".`,
     );
+    this._onWorkspaceChanged?.(this._selectedWorkspaceLabel);
+  }
+
+  /**
+   * Re-scopes this window's session to a different backend — called when
+   * `actorium.environment`/`actorium.bffUrl` changes (see extension.ts).
+   * Unlike the old behavior (force disconnect + require a fresh device-flow
+   * login on every environment switch), this restores whatever session
+   * already exists for the new backend: reconnects silently if this window
+   * previously logged into it, or lands in "not connected" if it never has.
+   * Crucially, this never touches the PREVIOUS backend's token/workspace
+   * selection/credential file — those stay exactly as they were, so
+   * switching back later restores that session too, and no other window
+   * pointed at the old backend is affected.
+   */
+  async switchEnvironment(bffUrl: string): Promise<void> {
+    if (bffUrl === this._bffUrl) return;
+    this._bffUrl = bffUrl;
+
+    this._selectedWorkspaceId =
+      this.context.workspaceState.get<string>(this.scopedKey(WORKSPACE_ID_KEY)) ?? null;
+    this._selectedWorkspaceLabel =
+      this.context.workspaceState.get<string>(this.scopedKey(WORKSPACE_LABEL_KEY)) ?? null;
+    this._selectedOrgId =
+      this.context.workspaceState.get<string>(this.scopedKey(ORG_ID_KEY)) ?? null;
+    this._userProfile = null;
+    this._onProfileChanged?.(null);
+
+    const stored = await this.context.secrets.get(this.scopedKey(SECRET_KEY));
+    this._token = stored ?? null;
+
+    if (this._token) {
+      void this._fetchOrgs().catch(() => {});
+      await this._syncCredentialFile();
+      vscode.commands.executeCommand('setContext', 'actorium.connected', true);
+      this._onConnected?.();
+    } else {
+      await this._syncCredentialFile();
+      vscode.commands.executeCommand('setContext', 'actorium.connected', false);
+      this._onDisconnected?.();
+    }
     this._onWorkspaceChanged?.(this._selectedWorkspaceLabel);
   }
 }

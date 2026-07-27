@@ -46,17 +46,46 @@ export interface ActoriumConfig {
   clientId: string;
 }
 
+const SELECTED_ENVIRONMENT_KEY = 'actorium.selectedEnvironment';
+
+let _context: vscode.ExtensionContext | undefined;
+
+/**
+ * Wires up the store backing getSelectedEnvironment()/setSelectedEnvironment()
+ * below. Must be called once, early in activate(), before any of this
+ * module's other exports are used.
+ */
+export function initEnvironmentStore(context: vscode.ExtensionContext): void {
+  _context = context;
+}
+
+/**
+ * The server the user picked at login (see selectServer() in extension.ts).
+ * No longer a `actorium.environment` VS Code setting — this used to be
+ * buried in Settings and easy to miss; it's now chosen as an explicit step
+ * before the device flow starts, and persisted here (globalState, so it
+ * carries over across windows/reloads the same way the old User-scope
+ * setting did) rather than in settings.json.
+ */
+export function getSelectedEnvironment(): ActoriumEnvironment {
+  return _context?.globalState.get<ActoriumEnvironment>(SELECTED_ENVIRONMENT_KEY) ?? 'production';
+}
+
+export async function setSelectedEnvironment(environment: ActoriumEnvironment): Promise<void> {
+  await _context?.globalState.update(SELECTED_ENVIRONMENT_KEY, environment);
+}
+
 /**
  * Resolves effective config: explicit `actorium.*` settings win, otherwise
- * fall back to the defaults for the selected `actorium.environment`.
- * userServiceUrl/agentUrl are derived from the single bffUrl origin plus the
- * BFF's upstream path prefixes, matching digital-factory-ui's axios.ts
- * (one bffBaseUrl + per-service /bff/<service> prefix) rather than
- * independently configurable URLs.
+ * fall back to the defaults for the selected server (see
+ * getSelectedEnvironment() above). userServiceUrl/agentUrl are derived from
+ * the single bffUrl origin plus the BFF's upstream path prefixes, matching
+ * digital-factory-ui's axios.ts (one bffBaseUrl + per-service /bff/<service>
+ * prefix) rather than independently configurable URLs.
  */
 export function getActoriumConfig(): ActoriumConfig {
   const config = vscode.workspace.getConfiguration('actorium');
-  const environment = config.get<ActoriumEnvironment>('environment') ?? 'production';
+  const environment = getSelectedEnvironment();
   const defaults = ENVIRONMENTS[environment] ?? ENVIRONMENTS.production;
 
   const bffUrl = config.get<string>('bffUrl') || defaults.bffUrl;

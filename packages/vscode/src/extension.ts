@@ -1,7 +1,13 @@
 import * as vscode from 'vscode';
 
 import { AuthManager } from './auth/oauth.js';
-import { getActoriumConfig } from './config/environment.js';
+import {
+  type ActoriumEnvironment,
+  getActoriumConfig,
+  getSelectedEnvironment,
+  initEnvironmentStore,
+  setSelectedEnvironment,
+} from './config/environment.js';
 import { ACTORIUM_DOC_SCHEME, DocContentProvider } from './navigator/doc-content-provider.js';
 import { NavigatorPanelProvider } from './navigator/panel.js';
 import { codingApiConfig, getWorkspaceRepos } from './navigator/workflow-api.js';
@@ -261,6 +267,48 @@ async function addMcpServer(): Promise<void> {
   }
 }
 
+interface ServerItem extends vscode.QuickPickItem {
+  environment: ActoriumEnvironment;
+}
+
+const SERVER_ITEMS: ReadonlyArray<Omit<ServerItem, 'label'> & { label: string }> = [
+  { label: 'Production', description: 'Connect to Actorium Production', environment: 'production' },
+  { label: 'ABP', description: 'Connect to Actorium ABP', environment: 'abp' },
+  { label: 'SW', description: 'Connect to Actorium SW', environment: 'sw' },
+  { label: 'Local', description: 'For Actorium developers only', environment: 'local' },
+];
+
+/**
+ * Prompts for which Actorium server to connect to — this used to be the
+ * `actorium.environment` Settings entry; it's now an explicit step shown
+ * right before the device flow starts (see connectWithServerSelection())
+ * instead of a setting a user has to go dig up. Returns false if the user
+ * cancels, so callers can abort the login instead of proceeding with
+ * whatever was previously selected.
+ */
+async function selectServer(): Promise<boolean> {
+  const current = getSelectedEnvironment();
+  const items: ServerItem[] = SERVER_ITEMS.map((item) => ({
+    ...item,
+    label: item.environment === current ? `$(check) ${item.label}` : item.label,
+  }));
+  const picked = await vscode.window.showQuickPick(items, {
+    placeHolder: 'Select the Actorium server to connect to',
+  });
+  if (!picked) return false;
+
+  await setSelectedEnvironment(picked.environment);
+  await authManager.switchEnvironment(getActoriumConfig().bffUrl);
+  return true;
+}
+
+/** Server picker, then device flow — the full "select server before login" flow. */
+async function connectWithServerSelection(): Promise<void> {
+  const selected = await selectServer();
+  if (!selected) return;
+  await authManager.startDeviceFlow();
+}
+
 interface AccountMenuItem extends vscode.QuickPickItem {
   action?: 'profile' | 'signout';
 }
@@ -268,7 +316,7 @@ interface AccountMenuItem extends vscode.QuickPickItem {
 async function showAccountMenu(): Promise<void> {
   const token = await authManager.getToken();
   if (!token) {
-    await authManager.startDeviceFlow();
+    await connectWithServerSelection();
     return;
   }
 
@@ -292,7 +340,8 @@ async function showAccountMenu(): Promise<void> {
 export function activate(context: vscode.ExtensionContext): void {
   // ── 1. Initialize modules ───────────────────────────────────────────────
   extContext = context;
-  authManager = new AuthManager(context);
+  initEnvironmentStore(context);
+  authManager = new AuthManager(context, getActoriumConfig().bffUrl);
   versionChecker = new VersionChecker(context);
 
   // Recover a selection stashed just before this window reloaded into a new
@@ -350,7 +399,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // ── 2. Commands ─────────────────────────────────────────────────────────
   context.subscriptions.push(
-    vscode.commands.registerCommand('actorium.connect', () => authManager.startDeviceFlow()),
+    vscode.commands.registerCommand('actorium.connect', () => connectWithServerSelection()),
     vscode.commands.registerCommand('actorium.disconnect', () => authManager.disconnect()),
     vscode.commands.registerCommand('actorium.switchWorkspace', () =>
       authManager.switchWorkspace(),
@@ -441,22 +490,20 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
-  // ── 3a. Environment switch → logout + refresh ───────────────────────────
-  // actorium.environment picks an entirely different server (different
-  // bffUrl/clientId — see config/environment.ts's ENVIRONMENTS map), so a
-  // token/workspace/org obtained under the OLD environment is meaningless
-  // (at best rejected outright, at worst — if two environments happened to
-  // share a compatible auth backend — silently pointed at the wrong org's
-  // data). disconnect() clears the stored token/workspace/org and fires
-  // onDisconnected, which already resets the navigator's connected state —
-  // the same "logout and refresh" sequence as clicking Sign out, just
-  // triggered by the settings change instead of a menu click. Deliberately
-  // does NOT auto-reconnect: a different server means a real re-login, not
-  // a silent retry.
+  // ── 3a. Advanced bffUrl override → re-scope to the new backend ─────────
+  // Normal server selection now goes through selectServer() (which calls
+  // switchEnvironment() itself — see above), but `actorium.bffUrl` remains
+  // an undocumented settings.json override for pointing at an arbitrary
+  // backend without going through the four fixed environments. AuthManager
+  // keys its token/workspace-org selection/credential file by bffUrl (see
+  // oauth.ts), so switchEnvironment() here just repoints this window at
+  // whichever session (if any) already exists for the new backend — it does
+  // NOT disconnect, and critically does NOT touch any other backend's or
+  // window's stored session.
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration('actorium.environment')) {
-        void authManager.disconnect();
+      if (e.affectsConfiguration('actorium.bffUrl')) {
+        void authManager.switchEnvironment(getActoriumConfig().bffUrl);
       }
     }),
   );
