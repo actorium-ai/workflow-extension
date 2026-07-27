@@ -46,7 +46,6 @@ manual credential setup.
 | Setting | Description |
 | --- | --- |
 | `actorium.environment` | Which Actorium server to connect to (`production` by default) |
-| `actorium.repoSearchPaths` | Local directories to scan (2 levels deep) when auto-searching for a repo to link (default `["~/code"]`) |
 
 ## License
 

@@ -2,8 +2,6 @@ import * as fsSync from 'fs';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
-import type { LinkedRepo } from './repoLinker.js';
-
 const START_MARKER = '<!-- actorium:generated:start -->';
 const END_MARKER = '<!-- actorium:generated:end -->';
 
@@ -11,25 +9,23 @@ export interface AgentsFileParams {
   orgName: string;
   workspaceName: string;
   workspaceId: string;
-  linkedRepos: LinkedRepo[];
 }
 
 function generatedSection(params: AgentsFileParams): string {
-  const repoLines = params.linkedRepos.length
-    ? params.linkedRepos.map((r) => `- \`${r.name}/\` → ${r.target}`).join('\n')
-    : '_No repos linked yet — run "Actorium: Add Repo" in VS Code._';
-
   return `${START_MARKER}
 # Actorium workspace: ${params.workspaceName} (${params.orgName})
 
 This folder is an **Actorium workspace** — a container for the repos belonging to
 the "${params.workspaceName}" workspace (id \`${params.workspaceId}\`). Each subfolder
-below is a symlink to a real local git clone; edit/commit/push in them exactly as
-you would any other checkout.
+directly inside it is a symlink to a real local git clone; edit/commit/push in them
+exactly as you would any other checkout.
 
 ## Linked repos
 
-${repoLines}
+See \`.actorium/repo-links.json\` for the exact mapping from each linked folder name
+to its Actorium repo id — a folder's name doesn't always match its repo id (e.g. a
+clone named \`engine-ui\` linked as the \`engine-dashboard\` repo), so don't assume the
+two are the same; that file is the source of truth.
 
 Missing a repo you need? Run "Actorium: Add Repo" in VS Code to link it in.
 

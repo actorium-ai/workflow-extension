@@ -4,6 +4,5 @@ out/
 *.vsix
 .DS_Store
 
-
 .idea
 .vscode

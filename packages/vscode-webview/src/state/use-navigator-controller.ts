@@ -8,11 +8,14 @@ import type {
   McpCliStatus,
   MeUser,
   StorageDocument,
+  TechnicalSkillsStatuses,
   VersionEntry,
 } from '../utils/types.ts';
 import { getVsCodeApi } from '../utils/vscode-api.ts';
 
 const vscode = getVsCodeApi();
+
+const SKILLS_TARGETS: AgentTarget[] = ['claude', 'codex', 'opencode'];
 
 export function useNavigatorController() {
   const [isConnected, setIsConnected] = useState(false);
@@ -27,6 +30,14 @@ export function useNavigatorController() {
   const [pendingAgents, setPendingAgents] = useState<Set<AgentTarget>>(new Set());
   const [mcpCliStatus, setMcpCliStatus] = useState<McpCliStatus | null>(null);
   const [mcpCliInstalling, setMcpCliInstalling] = useState(false);
+  const [cloningAll, setCloningAll] = useState(false);
+  const [repairing, setRepairing] = useState(false);
+  const [technicalSkillsStatuses, setTechnicalSkillsStatuses] = useState<TechnicalSkillsStatuses>(
+    {},
+  );
+  const [technicalSkillsInstalling, setTechnicalSkillsInstalling] = useState<Set<AgentTarget>>(
+    new Set(),
+  );
 
   const connect = useCallback(() => vscode.postMessage({ command: 'connect' }), []);
   const switchWorkspace = useCallback(() => vscode.postMessage({ command: 'switchWorkspace' }), []);
@@ -40,6 +51,25 @@ export function useNavigatorController() {
   const requestFeatures = useCallback(() => vscode.postMessage({ command: 'listFeatures' }), []);
   const requestRepos = useCallback(() => vscode.postMessage({ command: 'listRepos' }), []);
   const addRepo = useCallback(() => vscode.postMessage({ command: 'addRepo' }), []);
+  const unlinkRepo = useCallback(
+    (name: string) => vscode.postMessage({ command: 'unlinkRepo', name }),
+    [],
+  );
+  /** The per-row "Clone" action on a known-but-unlinked workspace repo —
+   * name passed explicitly so the clone lands under the repo's real name.
+   * Errors surface via the extension host's own toast (see panel.ts's
+   * _cloneRepo), so there's no local error/loading state to track here. */
+  const cloneRepo = useCallback((url: string, name?: string) => {
+    vscode.postMessage({ command: 'cloneRepo', url, name });
+  }, []);
+  const cloneAllRepos = useCallback(() => {
+    setCloningAll(true);
+    vscode.postMessage({ command: 'cloneAllRepos' });
+  }, []);
+  const repairWorkspace = useCallback(() => {
+    setRepairing(true);
+    vscode.postMessage({ command: 'repairWorkspace' });
+  }, []);
   const openWorkspaceFolder = useCallback(
     () => vscode.postMessage({ command: 'openWorkspaceFolder' }),
     [],
@@ -53,6 +83,10 @@ export function useNavigatorController() {
     setPendingAgents((prev) => new Set(prev).add(target));
     vscode.postMessage({ command: 'disconnectAgent', target });
   }, []);
+  const openAgentCli = useCallback(
+    (target: AgentTarget) => vscode.postMessage({ command: 'openAgentCli', target }),
+    [],
+  );
   const requestMcpCliStatus = useCallback(
     () => vscode.postMessage({ command: 'getMcpCliStatus' }),
     [],
@@ -60,6 +94,19 @@ export function useNavigatorController() {
   const installMcpCli = useCallback(() => {
     setMcpCliInstalling(true);
     vscode.postMessage({ command: 'installMcpCli' });
+  }, []);
+  const requestTechnicalSkillsStatus = useCallback(() => {
+    for (const target of SKILLS_TARGETS) {
+      vscode.postMessage({ command: 'getTechnicalSkillsStatus', target });
+    }
+  }, []);
+  const installTechnicalSkills = useCallback((target: AgentTarget) => {
+    setTechnicalSkillsInstalling((prev) => new Set(prev).add(target));
+    vscode.postMessage({ command: 'installTechnicalSkills', target });
+  }, []);
+  const uninstallTechnicalSkills = useCallback((target: AgentTarget) => {
+    setTechnicalSkillsInstalling((prev) => new Set(prev).add(target));
+    vscode.postMessage({ command: 'uninstallTechnicalSkills', target });
   }, []);
 
   const openDocument = useCallback(
@@ -117,6 +164,22 @@ export function useNavigatorController() {
           setMcpCliStatus(msg.status ?? null);
           setMcpCliInstalling(false);
           break;
+        case 'cloneAllReposDone':
+          setCloningAll(false);
+          break;
+        case 'repairWorkspaceDone':
+          setRepairing(false);
+          break;
+        case 'technicalSkillsStatusLoaded':
+          setTechnicalSkillsStatuses((prev) => ({ ...prev, [msg.target]: msg.status }));
+          break;
+        case 'technicalSkillsInstallDone':
+          setTechnicalSkillsInstalling((prev) => {
+            const next = new Set(prev);
+            next.delete(msg.target);
+            return next;
+          });
+          break;
       }
     };
     window.addEventListener('message', handler);
@@ -130,8 +193,10 @@ export function useNavigatorController() {
   }, []);
 
   // Fetch each section once a workspace is available (initial ready sync AND
-  // any later workspace switch) — no polling, docs/features are otherwise
-  // refreshed by manually reopening the section for now.
+  // any later workspace switch). Docs/features are also kept fresh after
+  // this by the extension host itself (NavigatorPanelProvider's visibility
+  // listener + poll interval, panel.ts) re-pushing docsLoaded/featuresLoaded
+  // without this effect re-running.
   useEffect(() => {
     if (isConnected && workspaceLabel) {
       requestDocs();
@@ -139,6 +204,7 @@ export function useNavigatorController() {
       requestRepos();
       requestMcpStatus();
       requestMcpCliStatus();
+      requestTechnicalSkillsStatus();
     }
   }, [
     isConnected,
@@ -148,6 +214,7 @@ export function useNavigatorController() {
     requestRepos,
     requestMcpStatus,
     requestMcpCliStatus,
+    requestTechnicalSkillsStatus,
   ]);
 
   return {
@@ -169,14 +236,25 @@ export function useNavigatorController() {
     repos,
     hasWorkspaceFolder,
     addRepo,
+    unlinkRepo,
+    cloneRepo,
+    cloneAllRepos,
+    cloningAll,
+    repairWorkspace,
+    repairing,
     openWorkspaceFolder,
     mcpStatuses,
     pendingAgents,
     connectAgent,
     disconnectAgent,
+    openAgentCli,
     mcpCliStatus,
     mcpCliInstalling,
     installMcpCli,
+    technicalSkillsStatuses,
+    technicalSkillsInstalling,
+    installTechnicalSkills,
+    uninstallTechnicalSkills,
   };
 }
 

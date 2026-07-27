@@ -45,7 +45,7 @@ function envArg(bffUrl: string): string {
  * we hand `claude`/`codex` here — can fail with ENOENT even though the
  * binary is actually linked and working.
  */
-function envWithPnpmBin(): NodeJS.ProcessEnv {
+export function envWithPnpmBin(): NodeJS.ProcessEnv {
   const pnpmHome = process.env.PNPM_HOME || path.join(os.homedir(), 'Library', 'pnpm');
   const currentPath = process.env.PATH ?? '';
   const alreadyPresent = currentPath.split(path.delimiter).includes(pnpmHome);

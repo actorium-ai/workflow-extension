@@ -14,7 +14,19 @@ import {
   getOpencodeStatus,
   installMcpCli,
 } from '../workspace/mcpConnect.js';
-import { listLinkedRepos } from '../workspace/repoLinker.js';
+import {
+  cloneAllRepos,
+  cloneRepo,
+  listLinkedRepos,
+  removeBrokenLink,
+  unlinkRepo,
+} from '../workspace/repoLinker.js';
+import { readRepoLinkManifest, repairRepoLinkManifest } from '../workspace/repoLinkManifest.js';
+import {
+  getTechnicalSkillsStatus,
+  installTechnicalSkills,
+  uninstallTechnicalSkills,
+} from '../workspace/technicalSkills.js';
 import { DocContentProvider } from './doc-content-provider.js';
 import { FeatureDetailPanel } from './feature-detail-panel.js';
 import { FeaturesBrowserPanel } from './features-browser-panel.js';
@@ -27,6 +39,12 @@ import {
   listFeatures,
 } from './workflow-api.js';
 
+/** How often docs/features are re-polled while the sidebar is visible —
+ * cheap workspace-scoped list reads, so a short interval is fine and keeps
+ * changes made elsewhere (another IDE window, the web app, an agent task)
+ * showing up without the user having to switch views to trigger a refetch. */
+const DOCS_FEATURES_POLL_INTERVAL_MS = 30_000;
+
 /**
  * Navigator panel provider — manages the extension's one webview (primary
  * sidebar), listing the current workspace's documents, features, and linked
@@ -38,6 +56,7 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
   private _workspaceLabel: string | null = null;
   private _userProfile: MeUser | null = null;
   private _versionBlockedEntry: VersionEntry | null = null;
+  private _pollInterval: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -57,6 +76,29 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
     };
 
     webviewView.webview.html = buildWebviewHtml(this.context, webviewView.webview);
+
+    webviewView.onDidChangeVisibility(() => {
+      if (webviewView.visible) {
+        void this._loadDocs();
+        void this._loadFeatures();
+      }
+    });
+
+    // Belt-and-suspenders alongside the visibility refetch above: catches
+    // changes made elsewhere while the user is just sitting on this view
+    // (e.g. reading Docs) without ever triggering a re-show.
+    this._pollInterval = setInterval(() => {
+      if (webviewView.visible && this._connected && this._workspaceLabel) {
+        void this._loadDocs();
+        void this._loadFeatures();
+      }
+    }, DOCS_FEATURES_POLL_INTERVAL_MS);
+    webviewView.onDidDispose(() => {
+      if (this._pollInterval) {
+        clearInterval(this._pollInterval);
+        this._pollInterval = null;
+      }
+    });
 
     webviewView.webview.onDidReceiveMessage(async (message) => {
       switch (message.command) {
@@ -78,23 +120,13 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
           break;
         }
 
-        case 'listDocs': {
-          const workspaceId = this.codingApiCtx.getWorkspaceId();
-          const docs = workspaceId
-            ? await listDocuments(codingApiConfig(this.codingApiCtx), workspaceId)
-            : null;
-          this._postMessage({ command: 'docsLoaded', docs: docs ?? [] });
+        case 'listDocs':
+          await this._loadDocs();
           break;
-        }
 
-        case 'listFeatures': {
-          const workspaceId = this.codingApiCtx.getWorkspaceId();
-          const features = workspaceId
-            ? await listFeatures(codingApiConfig(this.codingApiCtx), workspaceId)
-            : null;
-          this._postMessage({ command: 'featuresLoaded', features: features ?? [] });
+        case 'listFeatures':
+          await this._loadFeatures();
           break;
-        }
 
         case 'openDocument':
           await openWorkspaceDocument(message.doc, this.codingApiCtx, this.docContentProvider);
@@ -125,6 +157,22 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
           await this._loadRepos();
           break;
 
+        case 'unlinkRepo':
+          await this._unlinkRepo(message.name);
+          break;
+
+        case 'cloneRepo':
+          await this._cloneRepo(message.url, message.name);
+          break;
+
+        case 'cloneAllRepos':
+          await this._cloneAllRepos();
+          break;
+
+        case 'repairWorkspace':
+          await this._repairWorkspace();
+          break;
+
         case 'listMcpStatus':
           await this._loadMcpStatus();
           break;
@@ -139,6 +187,10 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
           await this._loadMcpStatus();
           break;
 
+        case 'openAgentCli':
+          await vscode.commands.executeCommand('actorium.openAgentCli', message.target);
+          break;
+
         case 'getMcpCliStatus':
           await this._loadMcpCliStatus();
           break;
@@ -147,11 +199,19 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
           await this._installMcpCli();
           break;
 
+        case 'getTechnicalSkillsStatus':
+          await this._loadTechnicalSkillsStatus(message.target);
+          break;
+
+        case 'installTechnicalSkills':
+          await this._installTechnicalSkills(message.target);
+          break;
+
+        case 'uninstallTechnicalSkills':
+          await this._uninstallTechnicalSkills(message.target);
+          break;
+
         case 'openWorkspaceFolder':
-          // A specific repo row's click also lands here (see
-          // workspace-panel.tsx) — every repo is a symlink directly inside
-          // the workspace folder, so opening that root already surfaces it
-          // in the Explorer; there's no separate "open just this repo" mode.
           vscode.commands.executeCommand('actorium.openWorkspaceFolder');
           break;
 
@@ -183,42 +243,224 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
     );
   }
 
-  /**
-   * Merges the workspace's actual repo list (from workflow-backend) with
-   * what's really symlinked into the local workspace folder, so the sidebar
-   * can show which of the workspace's repos still need linking rather than
-   * just listing whatever happens to be on disk. Falls back to disk-only
-   * (every entry `linked: true`, as before this cross-reference existed) if
-   * the API call fails — offline shouldn't blank out a working local list.
-   */
+  private async _loadDocs(): Promise<void> {
+    const workspaceId = this.codingApiCtx.getWorkspaceId();
+    const docs = workspaceId
+      ? await listDocuments(codingApiConfig(this.codingApiCtx), workspaceId)
+      : null;
+    this._postMessage({ command: 'docsLoaded', docs: docs ?? [] });
+  }
+
+  private async _loadFeatures(): Promise<void> {
+    const workspaceId = this.codingApiCtx.getWorkspaceId();
+    const features = workspaceId
+      ? await listFeatures(codingApiConfig(this.codingApiCtx), workspaceId)
+      : null;
+    this._postMessage({ command: 'featuresLoaded', features: features ?? [] });
+  }
+
   private async _loadRepos(): Promise<void> {
     const workspaceId = this.getWorkspaceId();
     const folder = workspaceId ? getWorkspaceFolder(this.context, workspaceId) : undefined;
-    const [linked, workspaceRepos] = await Promise.all([
+    const [linked, workspaceRepos, repoLinkManifest] = await Promise.all([
       folder ? listLinkedRepos(folder) : Promise.resolve([]),
       workspaceId
         ? getWorkspaceRepos(codingApiConfig(this.codingApiCtx), workspaceId)
         : Promise.resolve(null),
+      folder ? readRepoLinkManifest(folder) : Promise.resolve<Record<string, string>>({}),
     ]);
 
-    const linkedByName = new Map(linked.map((r) => [r.name.toLowerCase(), r]));
+    const linkedByRepoId = new Map(
+      linked.map((r) => [(repoLinkManifest[r.name] ?? r.name).toLowerCase(), r]),
+    );
     const seen = new Set<string>();
-    const repos: { name: string; target?: string; linked: boolean }[] = [];
+    const repos: {
+      name: string;
+      target?: string;
+      linked: boolean;
+      repoUrl?: string;
+      linkName?: string;
+      isSymlink?: boolean;
+      broken?: boolean;
+    }[] = [];
 
     for (const wr of workspaceRepos ?? []) {
-      const local = linkedByName.get(wr.repo_id.toLowerCase());
-      seen.add(wr.repo_id.toLowerCase());
-      repos.push({ name: wr.repo_id, target: local?.target, linked: !!local });
+      const key = wr.repo_id.toLowerCase();
+      const local = linkedByRepoId.get(key);
+      seen.add(key);
+      repos.push({
+        name: wr.repo_id,
+        target: local?.target,
+        linked: !!local,
+        repoUrl: wr.repo_url ?? undefined,
+        linkName: local && local.name.toLowerCase() !== key ? local.name : undefined,
+        isSymlink: local?.isSymlink,
+        broken: local?.broken,
+      });
     }
     // Any locally-linked repo the workspace API doesn't know about (linked
     // before being registered workspace-side, or an unrelated folder) still
     // shows up, same as before this cross-reference existed.
     for (const r of linked) {
-      if (!seen.has(r.name.toLowerCase()))
-        repos.push({ name: r.name, target: r.target, linked: true });
+      const repoId = (repoLinkManifest[r.name] ?? r.name).toLowerCase();
+      if (!seen.has(repoId)) {
+        repos.push({
+          name: r.name,
+          target: r.target,
+          linked: true,
+          isSymlink: r.isSymlink,
+          broken: r.broken,
+        });
+      }
     }
 
     this._postMessage({ command: 'reposLoaded', repos, hasWorkspaceFolder: !!folder });
+  }
+
+  /** Confirms (destructive-adjacent — removes a symlink, though the real
+   * clone it points to is untouched) then removes a repo's symlink from the
+   * workspace folder. Refreshes AGENTS.md/manifest and the repo list on
+   * success, same as every other repo-state-changing op. */
+  private async _unlinkRepo(name: string): Promise<void> {
+    const workspaceId = this.getWorkspaceId();
+    const folder = workspaceId ? getWorkspaceFolder(this.context, workspaceId) : undefined;
+    if (!folder) return;
+
+    const confirmed = await vscode.window.showWarningMessage(
+      `Unlink "${name}" from this workspace? The local clone won't be deleted.`,
+      { modal: true },
+      'Unlink',
+    );
+    if (confirmed !== 'Unlink') return;
+
+    const result = await unlinkRepo(folder, name);
+    if (!result.ok) {
+      vscode.window.showErrorMessage(`Actorium: ${result.message}`);
+    } else {
+      await this.regenerateAgentsFile(folder);
+    }
+    await this._loadRepos();
+  }
+
+  /** Clones a single git URL and links it — the webview's "Clone from git
+   * URL" modal (any URL, name optional/derived) and its per-row "Clone"
+   * action on a known-but-unlinked workspace repo (explicit name) both land
+   * here. Always reports back via `cloneRepoResult` so the modal can show
+   * an inline error/success instead of only a toast (a toast is easy to
+   * miss on a form that's still open waiting for feedback) — the toast on
+   * failure is a backstop for the per-row path, which has no modal open. */
+  private async _cloneRepo(url: string, name?: string): Promise<void> {
+    const workspaceId = this.getWorkspaceId();
+    const folder = workspaceId ? getWorkspaceFolder(this.context, workspaceId) : undefined;
+    if (!folder) {
+      this._postMessage({
+        command: 'cloneRepoResult',
+        ok: false,
+        message: 'Link a workspace folder first.',
+      });
+      return;
+    }
+
+    const result = await cloneRepo(folder, url, name);
+    if (result.ok) {
+      await this.regenerateAgentsFile(folder);
+    } else {
+      vscode.window.showErrorMessage(`Actorium: ${result.message}`);
+    }
+    this._postMessage({ command: 'cloneRepoResult', ok: result.ok, message: result.message });
+    await this._loadRepos();
+  }
+
+  /** Clones every workspace repo that isn't linked yet and has a known
+   * repo_url — the section header's "Clone all" action. Reports the batch
+   * outcome via a toast (mirroring addRepo's own multi-link summary toast)
+   * since there's no modal open for this path to show it inline. */
+  private async _cloneAllRepos(): Promise<void> {
+    const workspaceId = this.getWorkspaceId();
+    const folder = workspaceId ? getWorkspaceFolder(this.context, workspaceId) : undefined;
+    if (!folder || !workspaceId) {
+      this._postMessage({ command: 'cloneAllReposDone' });
+      return;
+    }
+
+    const [linked, workspaceRepos] = await Promise.all([
+      listLinkedRepos(folder),
+      getWorkspaceRepos(codingApiConfig(this.codingApiCtx), workspaceId),
+    ]);
+    const linkedNames = new Set(linked.map((r) => r.name.toLowerCase()));
+    const candidates = (workspaceRepos ?? [])
+      .filter((r) => r.repo_url && !linkedNames.has(r.repo_id.toLowerCase()))
+      .map((r) => ({ name: r.repo_id, url: r.repo_url as string }));
+
+    if (candidates.length === 0) {
+      vscode.window.showInformationMessage(
+        'Actorium: Nothing to clone — every repo is already linked.',
+      );
+      this._postMessage({ command: 'cloneAllReposDone' });
+      return;
+    }
+
+    const { linked: newlyLinked, failures } = await cloneAllRepos(folder, candidates);
+    if (newlyLinked.length > 0) await this.regenerateAgentsFile(folder);
+
+    if (failures.length === 0) {
+      vscode.window.showInformationMessage(
+        `Actorium: Cloned ${newlyLinked.length} repo${newlyLinked.length === 1 ? '' : 's'}.`,
+      );
+    } else {
+      vscode.window.showWarningMessage(
+        `Actorium: Cloned ${newlyLinked.length}, failed ${failures.length}: ${failures
+          .map((f) => `${f.name} (${f.message})`)
+          .join('; ')}`,
+      );
+    }
+    this._postMessage({ command: 'cloneAllReposDone' });
+    await this._loadRepos();
+  }
+
+  /** Regenerates repo-links.json, AGENTS.md, and .actorium/workspace.json
+   * from current state — the section header's "Repair" action, for when
+   * any of these have drifted (hand-edited, corrupted, left over from a
+   * renamed/moved workspace) rather than requiring the user to unlink and
+   * re-link every repo to fix it. Also cleans up any broken symlink left
+   * behind by a repo whose target folder was deleted out from under the
+   * workspace: removes the dangling link from disk and drops its now-stale
+   * repo-links.json entry (see removeBrokenLink), so those don't linger as
+   * permanent "unlink" rows the user can never clear. */
+  private async _repairWorkspace(): Promise<void> {
+    const workspaceId = this.getWorkspaceId();
+    const folder = workspaceId ? getWorkspaceFolder(this.context, workspaceId) : undefined;
+    if (!folder || !workspaceId) {
+      vscode.window.showWarningMessage('Actorium: Connect and select a workspace first.');
+      this._postMessage({ command: 'repairWorkspaceDone' });
+      return;
+    }
+
+    const [linked, workspaceRepos] = await Promise.all([
+      listLinkedRepos(folder),
+      getWorkspaceRepos(codingApiConfig(this.codingApiCtx), workspaceId),
+    ]);
+    const broken = linked.filter((r) => r.broken);
+    for (const r of broken) {
+      await removeBrokenLink(folder, r.name);
+    }
+    const healthy = linked.filter((r) => !r.broken);
+
+    const workspaceRepoIds = (workspaceRepos ?? []).map((r) => r.repo_id);
+    await repairRepoLinkManifest(
+      folder,
+      healthy.map((r) => r.name),
+      workspaceRepoIds,
+    );
+    await this.regenerateAgentsFile(folder);
+
+    vscode.window.showInformationMessage(
+      broken.length > 0
+        ? `Actorium: Repaired repo-links.json, AGENTS.md, and workspace.json — removed ${broken.length} broken link${broken.length === 1 ? '' : 's'} (${broken.map((r) => r.name).join(', ')}).`
+        : 'Actorium: Repaired repo-links.json, AGENTS.md, and workspace.json.',
+    );
+    this._postMessage({ command: 'repairWorkspaceDone' });
+    await this._loadRepos();
   }
 
   /** Passive status check — never prompts to link a workspace folder (unlike
@@ -293,6 +535,66 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
       vscode.window.showErrorMessage(`Actorium: ${result.message}`);
     }
     await this._loadMcpCliStatus();
+  }
+
+  private currentWorkspaceFolder(): string | undefined {
+    const workspaceId = this.getWorkspaceId();
+    return workspaceId ? getWorkspaceFolder(this.context, workspaceId) : undefined;
+  }
+
+  /** Checks how many of the bundled technical skills are already copied
+   * into this workspace folder's target-specific skills directory (see
+   * technicalSkills.ts) — drives the Skills section's per-agent row. */
+  private async _loadTechnicalSkillsStatus(target: AgentTarget): Promise<void> {
+    const folder = this.currentWorkspaceFolder();
+    const status = folder
+      ? await getTechnicalSkillsStatus(this.context, folder, target)
+      : { installed: false, total: 0 };
+    this._postMessage({ command: 'technicalSkillsStatusLoaded', target, status });
+  }
+
+  /** Copies every bundled technical skill into this workspace folder's
+   * target-specific skills directory (see technicalSkills.ts) — requires a
+   * linked workspace folder since, unlike the actorium-mcp CLI, these
+   * skills are written into the workspace itself rather than installed
+   * globally. */
+  private async _installTechnicalSkills(target: AgentTarget): Promise<void> {
+    const folder = this.currentWorkspaceFolder();
+    if (!folder) {
+      vscode.window.showWarningMessage('Actorium: Link a workspace folder first.');
+      this._postMessage({ command: 'technicalSkillsInstallDone', target });
+      return;
+    }
+
+    const result = await installTechnicalSkills(this.context, folder, target);
+    if (result.ok) {
+      vscode.window.showInformationMessage(`Actorium: ${result.message}`);
+    } else {
+      vscode.window.showErrorMessage(`Actorium: ${result.message}`);
+    }
+    this._postMessage({ command: 'technicalSkillsInstallDone', target });
+    await this._loadTechnicalSkillsStatus(target);
+  }
+
+  /** Removes every bundled technical skill from this workspace folder's
+   * target-specific skills directory (see technicalSkills.ts) — the Skills
+   * section's "Uninstall" action once a target is fully installed. */
+  private async _uninstallTechnicalSkills(target: AgentTarget): Promise<void> {
+    const folder = this.currentWorkspaceFolder();
+    if (!folder) {
+      vscode.window.showWarningMessage('Actorium: Link a workspace folder first.');
+      this._postMessage({ command: 'technicalSkillsInstallDone', target });
+      return;
+    }
+
+    const result = await uninstallTechnicalSkills(this.context, folder, target);
+    if (result.ok) {
+      vscode.window.showInformationMessage(`Actorium: ${result.message}`);
+    } else {
+      vscode.window.showErrorMessage(`Actorium: ${result.message}`);
+    }
+    this._postMessage({ command: 'technicalSkillsInstallDone', target });
+    await this._loadTechnicalSkillsStatus(target);
   }
 
   /** Re-send extension-owned state on the webview's 'ready' handshake. */

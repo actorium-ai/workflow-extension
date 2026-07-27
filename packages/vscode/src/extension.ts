@@ -4,9 +4,15 @@ import { AuthManager } from './auth/oauth.js';
 import { getActoriumConfig } from './config/environment.js';
 import { ACTORIUM_DOC_SCHEME, DocContentProvider } from './navigator/doc-content-provider.js';
 import { NavigatorPanelProvider } from './navigator/panel.js';
+import { codingApiConfig, getWorkspaceRepos } from './navigator/workflow-api.js';
 import { VersionChecker } from './version/checker.js';
 import { writeAgentsFile } from './workspace/agentsFile.js';
-import { ensureWorkspaceFolder, getWorkspaceFolder } from './workspace/folderManager.js';
+import {
+  consumePendingWorkspaceSync,
+  ensureWorkspaceFolder,
+  getWorkspaceFolder,
+  stashPendingWorkspaceSync,
+} from './workspace/folderManager.js';
 import {
   type AgentTarget,
   connectClaudeCode,
@@ -15,10 +21,11 @@ import {
   disconnectClaudeCode,
   disconnectCodex,
   disconnectOpencode,
+  envWithPnpmBin,
   genericMcpConfigSnippet,
   type McpConnectResult,
 } from './workspace/mcpConnect.js';
-import { addRepo, listLinkedRepos } from './workspace/repoLinker.js';
+import { addRepo } from './workspace/repoLinker.js';
 import { writeWorkspaceManifest } from './workspace/workspaceManifest.js';
 
 let authManager: AuthManager;
@@ -43,17 +50,19 @@ function parseWorkspaceLabel(label: string | null): OrgWorkspaceNames | null {
 }
 
 /** Regenerates AGENTS.md and the .actorium/workspace.json manifest at the
- * workspace folder's root from the current org/workspace/linked-repo state —
- * called after every repo add so the files an agent (or actorium-mcp itself,
- * for the manifest — see workspaceManifest.ts) reads always reflect what's
- * actually linked/selected. */
+ * workspace folder's root from the current org/workspace state — called
+ * after every repo add/clone/unlink so the files an agent (or actorium-mcp
+ * itself, for the manifest — see workspaceManifest.ts) reads always reflect
+ * what's actually linked/selected. AGENTS.md itself no longer needs the
+ * linked-repo list threaded in — it just points at .actorium/repo-links.json
+ * (see agentsFile.ts), which repoLinker.ts/repoLinkManifest.ts keep current
+ * on every repo-state change directly. */
 async function regenerateAgentsFile(folderPath: string): Promise<void> {
   const names = parseWorkspaceLabel(authManager.getWorkspaceLabel());
   const workspaceId = authManager.getWorkspaceId();
   const orgId = authManager.getOrgId();
   if (!names || !workspaceId) return;
-  const linkedRepos = await listLinkedRepos(folderPath);
-  await writeAgentsFile(folderPath, { ...names, workspaceId, linkedRepos });
+  await writeAgentsFile(folderPath, { ...names, workspaceId });
   if (orgId) await writeWorkspaceManifest(folderPath, { workspaceId, orgId });
 }
 
@@ -132,6 +141,21 @@ async function syncWindowToWorkspace(workspaceId: string): Promise<void> {
   const currentFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (currentFolder === folderPath) return;
 
+  // About to reload into a different folder — stash the selection we just
+  // made so the reactivated extension can recover it. Without this, the
+  // reload restores whatever selection was last associated with *that*
+  // folder specifically (workspaceState is per-folder), which can be a
+  // stale, unrelated workspace rather than the one just picked.
+  const workspaceLabel = authManager.getWorkspaceLabel();
+  if (workspaceLabel) {
+    await stashPendingWorkspaceSync(extContext, {
+      folderPath,
+      workspaceId,
+      workspaceLabel,
+      orgId: authManager.getOrgId(),
+    });
+  }
+
   await openWorkspaceFolderInThisWindow(folderPath);
 }
 
@@ -166,6 +190,30 @@ function disconnectAgentByTarget(
     case 'opencode':
       return disconnectOpencode(folderPath);
   }
+}
+
+const AGENT_CLI_LABEL: Record<AgentTarget, string> = {
+  claude: 'Claude Code',
+  codex: 'Codex',
+  opencode: 'opencode',
+};
+
+/** Opens a terminal in the workspace folder and starts the given agent's
+ * CLI — `target` doubles as its own CLI command name (`claude`/`codex`/
+ * `opencode`). Uses the same PATH repair as the connect/disconnect health
+ * checks (envWithPnpmBin) since these binaries may only be on PATH via
+ * pnpm's global bin dir, which a terminal spawned by VS Code won't have
+ * sourced otherwise. Always opens a fresh terminal rather than reusing an
+ * active one, since sending a CLI-launch command into whatever terminal the
+ * user happens to have focused (mid-command, mid-prompt) would be unsafe. */
+function openAgentCli(target: AgentTarget, folderPath: string): void {
+  const terminal = vscode.window.createTerminal({
+    name: `Actorium: ${AGENT_CLI_LABEL[target]}`,
+    cwd: folderPath,
+    env: envWithPnpmBin(),
+  });
+  terminal.show();
+  terminal.sendText(target);
 }
 
 /**
@@ -247,6 +295,20 @@ export function activate(context: vscode.ExtensionContext): void {
   authManager = new AuthManager(context);
   versionChecker = new VersionChecker(context);
 
+  // Recover a selection stashed just before this window reloaded into a new
+  // folder (see syncWindowToWorkspace) — overrides the constructor's
+  // per-folder-restored selection if it's stale for the folder now open.
+  void consumePendingWorkspaceSync(
+    context,
+    vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+  ).then((pending) => {
+    if (pending) {
+      void authManager
+        .applyPendingWorkspaceSelection(pending.workspaceId, pending.workspaceLabel, pending.orgId)
+        .then(() => navigatorProvider?.setWorkspaceLabel(authManager.getWorkspaceLabel()));
+    }
+  });
+
   const docContentProvider = new DocContentProvider();
 
   const codingApiCtx = {
@@ -303,7 +365,12 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('actorium.addRepo', async () => {
       const folderPath = await resolveCurrentWorkspaceFolder();
       if (!folderPath) return;
-      const repos = await addRepo(folderPath);
+      const workspaceId = authManager.getWorkspaceId();
+      const workspaceRepos = workspaceId
+        ? await getWorkspaceRepos(codingApiConfig(codingApiCtx), workspaceId)
+        : null;
+      const workspaceRepoIds = (workspaceRepos ?? []).map((r) => r.repo_id);
+      const repos = await addRepo(folderPath, workspaceRepoIds);
       if (repos.length === 0) return;
       await regenerateAgentsFile(folderPath);
       vscode.window.showInformationMessage(
@@ -334,6 +401,11 @@ export function activate(context: vscode.ExtensionContext): void {
         return result;
       },
     ),
+    vscode.commands.registerCommand('actorium.openAgentCli', async (target: AgentTarget) => {
+      const folderPath = await resolveCurrentWorkspaceFolder();
+      if (!folderPath) return;
+      openAgentCli(target, folderPath);
+    }),
   );
 
   // ── 2b. URI handler — the device-authorize page in digital-factory-ui can

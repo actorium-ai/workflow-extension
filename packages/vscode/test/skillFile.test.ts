@@ -26,7 +26,15 @@ async function run(): Promise<void> {
   ok(content.includes('ln -s'), 'should instruct the agent to symlink, not copy');
   ok(
     content.includes('actorium:generated:start'),
-    "should reference AGENTS.md's marker so the agent updates the right section",
+    "should reference AGENTS.md's marker so the agent can find the workspace root",
+  );
+  ok(
+    content.includes('.actorium/repo-links.json'),
+    'should have the agent record the link-name → repo-id mapping in repo-links.json, not AGENTS.md',
+  );
+  ok(
+    content.includes('list_workspace_repos()'),
+    'should have the agent resolve the exact repo id via actorium-mcp rather than guessing from the folder name',
   );
 
   // Regenerating overwrites cleanly rather than appending.

@@ -21,7 +21,7 @@ const compat = new FlatCompat({
 });
 
 export default defineConfig([
-  globalIgnores(['**/eslint.config.mjs', 'dist/**', 'webview/**']),
+  globalIgnores(['**/eslint.config.mjs', 'dist/**', 'webview/**', 'resources/**']),
 
   {
     extends: fixupConfigRules(compat.extends('plugin:prettier/recommended')),

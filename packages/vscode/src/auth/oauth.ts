@@ -152,6 +152,28 @@ export class AuthManager {
   }
 
   /**
+   * Overrides whatever selection the constructor restored from this folder's
+   * own workspaceState, and re-persists it there too. Used once at activation
+   * to apply a pending cross-reload selection (see folderManager's
+   * stash/consumePendingWorkspaceSync) — switchWorkspace() reopening the
+   * window into a different folder loses the in-memory selection it just
+   * made, since workspaceState is scoped per folder and that write landed in
+   * the folder that was open before the reload, not this one.
+   */
+  async applyPendingWorkspaceSelection(
+    workspaceId: string,
+    workspaceLabel: string,
+    orgId: string | null,
+  ): Promise<void> {
+    this._selectedWorkspaceId = workspaceId;
+    this._selectedWorkspaceLabel = workspaceLabel;
+    this._selectedOrgId = orgId;
+    await this.context.workspaceState.update(WORKSPACE_ID_KEY, workspaceId);
+    await this.context.workspaceState.update(WORKSPACE_LABEL_KEY, workspaceLabel);
+    await this.context.workspaceState.update(ORG_ID_KEY, orgId ?? undefined);
+  }
+
+  /**
    * Initiate the OAuth device flow:
    * 1. Request device code from user-service
    * 2. Open browser for user to authorize

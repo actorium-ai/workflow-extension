@@ -26,14 +26,37 @@ export type {
 
 /** One repo the current workspace tracks (see the extension host's
  * src/navigator/workflow-api.ts getWorkspaceRepos), cross-referenced against
- * what's actually symlinked into the local workspace folder (see
+ * what's actually present in the local workspace folder (see
  * src/workspace/repoLinker.ts) — `linked` is false when the workspace knows
- * about this repo but no local clone has been linked yet, in which case
- * `target` is absent. */
+ * about this repo but no local clone/link exists yet, in which case `target`
+ * is absent. */
 export interface LinkedRepo {
   name: string;
   target?: string;
   linked: boolean;
+  /** The workspace's known git URL for this repo, if any — absent for a
+   * locally-linked repo the workspace API doesn't track. Drives the
+   * per-row "Clone" action on not-yet-linked repos and "Clone all". */
+  repoUrl?: string;
+  /** The actual local symlink/folder name, present only when it differs
+   * from `name` (the canonical repo_id) — e.g. a clone named "engine-ui"
+   * linked as the "engine-dashboard" repo. Resolved via .actorium/
+   * repo-links.json (see repoLinkManifest.ts), not by assuming the two
+   * match. */
+  linkName?: string;
+  /** False for a repo cloned directly into the workspace folder (the
+   * default for new clones), true for one linked in from elsewhere on disk
+   * via "Actorium: Add Repo" (or an older clone made before direct-clone
+   * was the default) — a plain direct clone has nothing to "unlink", so the
+   * panel only offers that action when this is true. Undefined when
+   * `linked` is false. */
+  isSymlink?: boolean;
+  /** True only when `isSymlink` is true and its target has since been
+   * deleted — the panel renders this as a distinct "unlink" row instead of
+   * the normal linked row, since the repo is still tracked but the local
+   * folder it pointed at is gone. Cleared by the section's "Repair"
+   * action, which removes the dangling link and its stale config entry. */
+  broken?: boolean;
 }
 
 /** Local coding agents the extension knows how to register actorium-mcp
@@ -67,3 +90,16 @@ export interface McpCliStatus {
    * soft nudge. */
   updateAvailable: boolean;
 }
+
+/** Whether the bundled Technical Skills (workflow-extension's own
+ * skills/technical_skills — see the extension host's src/workspace/
+ * technicalSkills.ts) are copied into this workspace folder's
+ * target-specific skills directory (.claude/skills, .codex/skills, or
+ * .opencode/skills). `installed` is false for a partial install (some but
+ * not all copied), since "Install" always re-copies the full set anyway. */
+export interface TechnicalSkillsStatus {
+  installed: boolean;
+  total: number;
+}
+
+export type TechnicalSkillsStatuses = Partial<Record<AgentTarget, TechnicalSkillsStatus>>;

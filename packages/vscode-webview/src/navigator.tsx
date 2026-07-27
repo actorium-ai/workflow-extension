@@ -1,12 +1,24 @@
-import { ExternalLink, FolderGit2, FolderOpen, ListTodo, Plus } from 'lucide-react';
+import {
+  Blocks,
+  ExternalLink,
+  FolderGit2,
+  FolderOpen,
+  GraduationCap,
+  ListTodo,
+  Plus,
+} from 'lucide-react';
 
+import { AgentStatusList } from './components/agent-status-list';
 import { AuthPrompt } from './components/auth-prompt';
 import { CollapsibleSection } from './components/collapsible-section';
 import { DocList } from './components/doc-list';
 import { FeatureList } from './components/feature-list';
 import { WorkspacePill } from './components/header';
+import { McpCliStatusRow } from './components/mcp-cli-status';
+import { TechnicalSkillsList } from './components/technical-skills-list';
 import { UserMenu } from './components/user-menu';
 import { VersionBlocked } from './components/version-blocked';
+import { WorkspaceMenu } from './components/workspace-menu';
 import { WorkspacePanel } from './components/workspace-panel';
 import { useNavigatorController } from './state/use-navigator-controller';
 
@@ -55,14 +67,22 @@ export function Navigator() {
             icon={<FolderGit2 className="h-3 w-3 shrink-0" aria-hidden="true" />}
             action={
               c.hasWorkspaceFolder ? (
-                <button
-                  type="button"
-                  title="Add repo"
-                  onClick={c.addRepo}
-                  className="shrink-0 rounded p-1 text-text-muted hover:bg-surface-secondary hover:text-text-primary"
-                >
-                  <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-                </button>
+                <div className="flex shrink-0 items-center gap-0.5">
+                  <button
+                    type="button"
+                    title="Add repo"
+                    onClick={c.addRepo}
+                    className="shrink-0 rounded p-1 text-text-muted hover:bg-surface-secondary hover:text-text-primary"
+                  >
+                    <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                  </button>
+                  <WorkspaceMenu
+                    onCloneAllRepos={c.cloneAllRepos}
+                    cloningAll={c.cloningAll}
+                    onRepair={c.repairWorkspace}
+                    repairing={c.repairing}
+                  />
+                </div>
               ) : undefined
             }
           >
@@ -71,15 +91,45 @@ export function Navigator() {
               hasWorkspaceFolder={c.hasWorkspaceFolder}
               onOpenWorkspaceFolder={c.openWorkspaceFolder}
               onAddRepo={c.addRepo}
-              mcpCliStatus={c.mcpCliStatus}
-              mcpCliInstalling={c.mcpCliInstalling}
-              onInstallMcpCli={c.installMcpCli}
-              mcpStatuses={c.mcpStatuses}
-              pendingAgents={c.pendingAgents}
-              onConnectAgent={c.connectAgent}
-              onDisconnectAgent={c.disconnectAgent}
+              onUnlinkRepo={c.unlinkRepo}
+              onCloneRepo={(repo) => repo.repoUrl && c.cloneRepo(repo.repoUrl, repo.name)}
               onTagInPrompt={c.tagInPrompt}
             />
+          </CollapsibleSection>
+
+          <CollapsibleSection
+            title="Plugins"
+            icon={<Blocks className="h-3 w-3 shrink-0" aria-hidden="true" />}
+          >
+            <div className="px-1">
+              <McpCliStatusRow
+                status={c.mcpCliStatus}
+                installing={c.mcpCliInstalling}
+                onInstall={c.installMcpCli}
+              />
+              <AgentStatusList
+                statuses={c.mcpStatuses}
+                pendingAgents={c.pendingAgents}
+                mcpCliInstalled={c.mcpCliStatus?.installed ?? false}
+                onConnect={c.connectAgent}
+                onDisconnect={c.disconnectAgent}
+                onOpenCli={c.openAgentCli}
+              />
+            </div>
+          </CollapsibleSection>
+
+          <CollapsibleSection
+            title="Skills"
+            icon={<GraduationCap className="h-3 w-3 shrink-0" aria-hidden="true" />}
+          >
+            <div className="px-1">
+              <TechnicalSkillsList
+                statuses={c.technicalSkillsStatuses}
+                installing={c.technicalSkillsInstalling}
+                onInstall={c.installTechnicalSkills}
+                onUninstall={c.uninstallTechnicalSkills}
+              />
+            </div>
           </CollapsibleSection>
 
           <CollapsibleSection

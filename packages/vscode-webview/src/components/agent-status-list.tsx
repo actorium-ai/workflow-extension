@@ -44,18 +44,30 @@ interface AgentStatusListProps {
   pendingAgents: Set<AgentTarget>;
   onConnect: (target: AgentTarget) => void;
   onDisconnect: (target: AgentTarget) => void;
+  /** Opens a terminal in the workspace folder and starts this agent's CLI —
+   * see the extension host's src/extension.ts openAgentCli. */
+  onOpenCli: (target: AgentTarget) => void;
+  /** Whether the actorium-mcp binary itself is on PATH (see
+   * McpCliStatusRow above it) — connecting registers actorium-mcp as an MCP
+   * server command, so it's meaningless (and errors out) before the binary
+   * exists. Disconnecting a stale registration never needs the binary, so
+   * that action stays available regardless. */
+  mcpCliInstalled: boolean;
 }
 
 /** Shows whether actorium-mcp is registered with each local coding agent —
  * and, for Claude Code, whether it's actually reachable right now (its own
  * `mcp get` does a real health check; Codex/opencode can only confirm the
  * config entry exists). Each row's action flips between Connect/Disconnect
- * based on current registration state. */
+ * based on current registration state; clicking the row itself (icon/label)
+ * opens the agent's CLI in a terminal instead. */
 export function AgentStatusList({
   statuses,
   pendingAgents,
   onConnect,
   onDisconnect,
+  onOpenCli,
+  mcpCliInstalled,
 }: AgentStatusListProps) {
   return (
     <>
@@ -63,39 +75,57 @@ export function AgentStatusList({
         const status = statuses[target];
         const registered = status?.registered ?? false;
         const pending = pendingAgents.has(target);
+        const connectBlocked = !registered && !mcpCliInstalled;
         return (
-          <div
-            key={target}
-            title={status?.detail ?? statusLabel(registered, status?.connected)}
-            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5"
-          >
-            <span className="relative shrink-0">
-              <CliIcon name={target} />
-              <StatusDot registered={registered} connected={status?.connected} />
-            </span>
-            <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
-              {AGENT_LABELS[target]}
-            </span>
+          <div key={target} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5">
             <button
               type="button"
-              disabled={pending}
-              onClick={() => (registered ? onDisconnect(target) : onConnect(target))}
-              className={
-                'flex shrink-0 items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium disabled:pointer-events-none disabled:opacity-60' +
-                (registered
-                  ? ' text-text-muted hover:bg-danger/10 hover:text-danger'
-                  : ' text-accent-foreground hover:bg-primary/10')
-              }
+              title={`Open ${AGENT_LABELS[target]} in a terminal`}
+              onClick={() => onOpenCli(target)}
+              className="flex min-w-0 flex-1 items-center gap-2 text-left"
             >
-              {pending && <Loader2 className="h-3 w-3 shrink-0 animate-spin" aria-hidden="true" />}
-              {pending
-                ? registered
-                  ? 'Disconnecting…'
-                  : 'Connecting…'
-                : registered
-                  ? 'Disconnect'
-                  : 'Connect'}
+              <span className="relative shrink-0">
+                <CliIcon name={target} />
+                <StatusDot registered={registered} connected={status?.connected} />
+              </span>
+              <span
+                title={status?.detail ?? statusLabel(registered, status?.connected)}
+                className="min-w-0 flex-1 truncate text-xs text-text-secondary"
+              >
+                {AGENT_LABELS[target]}
+              </span>
             </button>
+            {connectBlocked ? (
+              <span
+                title="Install actorium-mcp above first"
+                className="shrink-0 px-2 py-0.5 text-[11px] font-medium text-text-muted"
+              >
+                Connect
+              </span>
+            ) : (
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => (registered ? onDisconnect(target) : onConnect(target))}
+                className={
+                  'flex shrink-0 items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium disabled:pointer-events-none disabled:opacity-60' +
+                  (registered
+                    ? ' text-text-muted hover:bg-danger/10 hover:text-danger'
+                    : ' text-accent-foreground hover:bg-primary/10')
+                }
+              >
+                {pending && (
+                  <Loader2 className="h-3 w-3 shrink-0 animate-spin" aria-hidden="true" />
+                )}
+                {pending
+                  ? registered
+                    ? 'Disconnecting…'
+                    : 'Connecting…'
+                  : registered
+                    ? 'Disconnect'
+                    : 'Connect'}
+              </button>
+            )}
           </div>
         );
       })}

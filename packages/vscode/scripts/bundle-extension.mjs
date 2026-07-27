@@ -12,3 +12,7 @@ await esbuild.build({
   logLevel: 'info',
   allowOverwrite: true,
 });
+
+// resources/technical_skills (read by ../src/workspace/technicalSkills.ts) is
+// committed directly in this package — no build-time staging needed, unlike
+// vscode-webview's vite build outputting into ./webview/dist.
