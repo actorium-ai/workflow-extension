@@ -19,8 +19,8 @@ export const ENVIRONMENTS: Record<ActoriumEnvironment, EnvironmentDefaults> = {
     clientId: 'actorium-vscode',
   },
   abp: {
-    bffUrl: 'https://api.abp.vn',
-    frontendUrl: 'https://workflow-backend-api.abp.vn',
+    bffUrl: 'https://workflow-backend-api.abp.vn',
+    frontendUrl: 'https://workflow.abp.vn',
     clientId: 'actorium-vscode-abp',
   },
   sw: {
