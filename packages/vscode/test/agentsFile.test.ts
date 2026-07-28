@@ -38,6 +38,11 @@ async function run(): Promise<void> {
     ok(content.includes('.actorium/repo-links.json'));
     ok(content.includes('ws-123'));
     ok(content.includes("wasn't found in this extension build"));
+    ok(
+      content.includes('## Workspace custom rules'),
+      'pointer to WORKSPACE-RULES.md should be appended',
+    );
+    ok(content.includes('WORKSPACE-RULES.md'));
   }
 
   // A user's hand-written note appended after the generated section...
@@ -67,6 +72,8 @@ async function run(): Promise<void> {
     // appends a second generated block.
     deepStrictEqual(content.split('<!-- actorium:generated:start -->').length - 1, 1);
     deepStrictEqual(content.split('<!-- actorium:generated:end -->').length - 1, 1);
+    // The workspace-rules pointer isn't duplicated on repeat regeneration.
+    deepStrictEqual(content.split('## Workspace custom rules').length - 1, 1);
   }
 
   console.log('✅ AGENTS.md generation tests passed');

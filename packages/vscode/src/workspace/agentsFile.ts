@@ -4,6 +4,7 @@ import * as path from 'path';
 
 const START_MARKER = '<!-- actorium:generated:start -->';
 const END_MARKER = '<!-- actorium:generated:end -->';
+const WORKSPACE_RULES_HEADING = '## Workspace custom rules';
 
 export interface AgentsFileParams {
   orgName: string;
@@ -102,6 +103,25 @@ ${END_MARKER}`;
 }
 
 /**
+ * Appends a pointer to `WORKSPACE-RULES.md` right after the generated
+ * section, once, the first time AGENTS.md is written for a workspace folder
+ * — `ensureWorkspaceRulesFile` (see workspaceRulesFile.ts) creates that file
+ * alongside it. Skipped on every later regeneration once the heading is
+ * already present, since content after the end marker is never touched by
+ * the marker-replace path above and would otherwise need re-adding.
+ */
+function withWorkspaceRulesPointer(content: string): string {
+  if (content.includes(WORKSPACE_RULES_HEADING)) return content;
+  const pointer = `${WORKSPACE_RULES_HEADING}
+
+See \`WORKSPACE-RULES.md\` in this folder for workspace-specific rules that
+supplement or override the shared rules above. That file is user-owned —
+this extension never generates or overwrites it.
+`;
+  return `${content.trimEnd()}\n\n${pointer}`;
+}
+
+/**
  * Writes/updates AGENTS.md at the workspace folder's root, guiding any
  * AGENTS.md-aware coding agent (Claude Code, etc.) opened there. Only the
  * region between the start/end markers is regenerated — content a user
@@ -130,12 +150,13 @@ export async function writeAgentsFile(
   const startIdx = existing.indexOf(START_MARKER);
   const endIdx = existing.indexOf(END_MARKER);
 
-  const next =
+  const next = withWorkspaceRulesPointer(
     startIdx !== -1 && endIdx !== -1 && endIdx > startIdx
       ? existing.slice(0, startIdx) + section + existing.slice(endIdx + END_MARKER.length)
       : existing
         ? `${existing.trimEnd()}\n\n${section}\n`
-        : `${section}\n`;
+        : `${section}\n`,
+  );
 
   await fs.writeFile(filePath, next, 'utf8');
 }

@@ -14,6 +14,7 @@ import { NavigatorPanelProvider } from './navigator/panel.js';
 import { codingApiConfig, getWorkspaceRepos } from './navigator/workflow-api.js';
 import { VersionChecker } from './version/checker.js';
 import { writeAgentsFile } from './workspace/agentsFile.js';
+import { ensureEnvFile, ensureEnvGitignored } from './workspace/envFile.js';
 import {
   consumePendingWorkspaceSync,
   ensureWorkspaceFolder,
@@ -35,6 +36,7 @@ import {
 import { addRepo } from './workspace/repoLinker.js';
 import { readBundledSharedRules, writeWorkflowRules } from './workspace/workflowRules.js';
 import { writeWorkspaceManifest } from './workspace/workspaceManifest.js';
+import { ensureWorkspaceRulesFile } from './workspace/workspaceRulesFile.js';
 
 let authManager: AuthManager;
 let navigatorProvider: NavigatorPanelProvider;
@@ -65,7 +67,11 @@ function parseWorkspaceLabel(label: string | null): OrgWorkspaceNames | null {
  * selected. AGENTS.md itself no longer needs the linked-repo list threaded
  * in — it just points at .actorium/repo-links.json (see agentsFile.ts),
  * which repoLinker.ts/repoLinkManifest.ts keep current on every repo-state
- * change directly. The bundled shared.md content (see workflowRules.ts) is
+ * change directly. Also ensures a blank `.env` (gitignored) and a
+ * `WORKSPACE-RULES.md` exist at the folder root (see envFile.ts /
+ * workspaceRulesFile.ts) — both are create-once and never overwritten, so
+ * user-filled tokens or hand-written rules are never clobbered by a later
+ * regeneration. The bundled shared.md content (see workflowRules.ts) is
  * embedded directly in AGENTS.md's generated section, not just linked to —
  * a separate file is easy to skip, but every agent reads AGENTS.md. */
 async function regenerateAgentsFile(folderPath: string): Promise<void> {
@@ -77,6 +83,9 @@ async function regenerateAgentsFile(folderPath: string): Promise<void> {
   await writeAgentsFile(folderPath, { ...names, workspaceId }, sharedRulesMarkdown);
   if (orgId) await writeWorkspaceManifest(folderPath, { workspaceId, orgId });
   await writeWorkflowRules(extContext, folderPath);
+  await ensureEnvFile(folderPath);
+  await ensureEnvGitignored(folderPath);
+  await ensureWorkspaceRulesFile(folderPath);
 }
 
 /** Resolves (prompting if needed) the workspace folder for the currently
