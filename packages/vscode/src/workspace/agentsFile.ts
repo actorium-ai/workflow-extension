@@ -11,7 +11,28 @@ export interface AgentsFileParams {
   workspaceId: string;
 }
 
-function generatedSection(params: AgentsFileParams): string {
+/**
+ * Shifts every Markdown heading in `md` down one level (`#` -> `##`,
+ * `##` -> `###`, etc.) so `shared.md`'s own top-level `# Shared workflow
+ * rules` title nests correctly as a subsection once spliced into AGENTS.md's
+ * generated section, rather than competing with it at the same heading
+ * depth. Only matches headings at the start of a line (the standard ATX
+ * form this repo's docs use) — a `#` appearing mid-line (e.g. inside a code
+ * fence) is left untouched.
+ */
+function shiftHeadingsDown(md: string): string {
+  return md.replace(/^(#+)(\s)/gm, '#$1$2');
+}
+
+function generatedSection(params: AgentsFileParams, sharedRulesMarkdown: string | null): string {
+  const sharedRulesSection = sharedRulesMarkdown
+    ? shiftHeadingsDown(sharedRulesMarkdown.trimEnd())
+    : `## Shared workflow rules
+
+\`shared.md\` wasn't found in this extension build — check
+\`packages/vscode/resources/shared.md\` exists, then reinstall/rebuild the
+extension. Do not proceed on feature/task work without it.`;
+
   return `${START_MARKER}
 # Actorium workspace: ${params.workspaceName} (${params.orgName})
 
@@ -28,6 +49,25 @@ clone named \`engine-ui\` linked as the \`engine-dashboard\` repo), so don't ass
 two are the same; that file is the source of truth.
 
 Missing a repo you need? Run "Actorium: Add Repo" in VS Code to link it in.
+
+## Before you do anything
+
+The **Shared workflow rules** section below (embedded directly from \`shared.md\` —
+there's no separate copy of that file in this folder) governs every feature/task-scoped
+change you make here — feature/task lifecycle, review boundaries, PR conventions,
+and the **Context-gathering pre-flight** rule. Read it before editing anything;
+do not skip straight to code.
+
+At minimum, before acting on any feature or task: resolve the workspace, resolve
+the feature (\`get_feature\`), resolve the task (\`get_task\`), query RAG, query
+GitNexus, and read the feature's \`product_spec\`/\`technical_design\`/\`tasks\`
+documents if you're working inside a feature.
+
+If \`.claude/skills/\` has skills beyond \`link-repo\` (e.g. \`start-implementation\`,
+\`tech-lead\`, \`approve-feature\`), those are this workspace's process skills —
+prefer them over improvising the same steps from scratch.
+
+${sharedRulesSection}
 
 ## actorium-mcp
 
@@ -67,10 +107,20 @@ ${END_MARKER}`;
  * region between the start/end markers is regenerated — content a user
  * added above or below the markers survives untouched, so hand-written
  * notes aren't clobbered by a later "Add repo" regeneration.
+ *
+ * `sharedRulesMarkdown` (from `workflowRules.ts`'s `readBundledSharedRules`)
+ * is embedded directly in the generated section, not just linked to — a
+ * separate file is easy to skip, but every agent reads AGENTS.md. Pass null
+ * if the bundled `shared.md` couldn't be read; a fallback notice is embedded
+ * instead of silently omitting the rules.
  */
-export async function writeAgentsFile(folderPath: string, params: AgentsFileParams): Promise<void> {
+export async function writeAgentsFile(
+  folderPath: string,
+  params: AgentsFileParams,
+  sharedRulesMarkdown: string | null,
+): Promise<void> {
   const filePath = path.join(folderPath, 'AGENTS.md');
-  const section = generatedSection(params);
+  const section = generatedSection(params, sharedRulesMarkdown);
 
   let existing = '';
   if (fsSync.existsSync(filePath)) {

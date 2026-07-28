@@ -26,15 +26,18 @@ const baseParams = {
 };
 
 async function run(): Promise<void> {
-  // First write creates the file with the generated section.
+  // First write creates the file with the generated section. Passing null
+  // for sharedRulesMarkdown exercises the "bundled shared.md missing"
+  // fallback notice, since no real bundle exists in this unit-test context.
   {
-    await writeAgentsFile(tempDir, baseParams);
+    await writeAgentsFile(tempDir, baseParams, null);
 
     const content = readFileSync(agentsPath, 'utf8');
     ok(content.includes('<!-- actorium:generated:start -->'));
     ok(content.includes('<!-- actorium:generated:end -->'));
     ok(content.includes('.actorium/repo-links.json'));
     ok(content.includes('ws-123'));
+    ok(content.includes("wasn't found in this extension build"));
   }
 
   // A user's hand-written note appended after the generated section...
@@ -45,11 +48,21 @@ async function run(): Promise<void> {
   }
 
   // ...survives a regeneration in place, without duplicating the markers.
+  // This pass also exercises real shared-rules content, checking it's
+  // embedded verbatim (modulo the heading shift) rather than just linked to.
   {
-    await writeAgentsFile(tempDir, baseParams);
+    await writeAgentsFile(
+      tempDir,
+      baseParams,
+      '# Shared workflow rules\n\n## Task structure rules\n',
+    );
 
     const content = readFileSync(agentsPath, 'utf8');
     ok(content.includes("Don't touch this."), 'hand-written note should survive regeneration');
+    ok(
+      content.includes('## Shared workflow rules') && content.includes('### Task structure rules'),
+      'shared.md headings should shift down one level when embedded',
+    );
     // Exactly one of each marker — regeneration replaces in place, never
     // appends a second generated block.
     deepStrictEqual(content.split('<!-- actorium:generated:start -->').length - 1, 1);

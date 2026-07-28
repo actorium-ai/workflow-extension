@@ -33,6 +33,7 @@ import {
   type McpConnectResult,
 } from './workspace/mcpConnect.js';
 import { addRepo } from './workspace/repoLinker.js';
+import { readBundledSharedRules, writeWorkflowRules } from './workspace/workflowRules.js';
 import { writeWorkspaceManifest } from './workspace/workspaceManifest.js';
 
 let authManager: AuthManager;
@@ -56,21 +57,26 @@ function parseWorkspaceLabel(label: string | null): OrgWorkspaceNames | null {
   return { orgName, workspaceName };
 }
 
-/** Regenerates AGENTS.md and the .actorium/workspace.json manifest at the
- * workspace folder's root from the current org/workspace state — called
- * after every repo add/clone/unlink so the files an agent (or actorium-mcp
- * itself, for the manifest — see workspaceManifest.ts) reads always reflect
- * what's actually linked/selected. AGENTS.md itself no longer needs the
- * linked-repo list threaded in — it just points at .actorium/repo-links.json
- * (see agentsFile.ts), which repoLinker.ts/repoLinkManifest.ts keep current
- * on every repo-state change directly. */
+/** Regenerates AGENTS.md, the .actorium/workspace.json manifest, and the
+ * bundled workflow skills at the workspace folder's root from the
+ * current org/workspace state — called after every repo add/clone/unlink so
+ * the files an agent (or actorium-mcp itself, for the manifest — see
+ * workspaceManifest.ts) reads always reflect what's actually linked/
+ * selected. AGENTS.md itself no longer needs the linked-repo list threaded
+ * in — it just points at .actorium/repo-links.json (see agentsFile.ts),
+ * which repoLinker.ts/repoLinkManifest.ts keep current on every repo-state
+ * change directly. The bundled shared.md content (see workflowRules.ts) is
+ * embedded directly in AGENTS.md's generated section, not just linked to —
+ * a separate file is easy to skip, but every agent reads AGENTS.md. */
 async function regenerateAgentsFile(folderPath: string): Promise<void> {
   const names = parseWorkspaceLabel(authManager.getWorkspaceLabel());
   const workspaceId = authManager.getWorkspaceId();
   const orgId = authManager.getOrgId();
   if (!names || !workspaceId) return;
-  await writeAgentsFile(folderPath, { ...names, workspaceId });
+  const sharedRulesMarkdown = await readBundledSharedRules(extContext);
+  await writeAgentsFile(folderPath, { ...names, workspaceId }, sharedRulesMarkdown);
   if (orgId) await writeWorkspaceManifest(folderPath, { workspaceId, orgId });
+  await writeWorkflowRules(extContext, folderPath);
 }
 
 /** Resolves (prompting if needed) the workspace folder for the currently
