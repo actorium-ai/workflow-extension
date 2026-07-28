@@ -70,6 +70,10 @@ export function useNavigatorController() {
     setRepairing(true);
     vscode.postMessage({ command: 'repairWorkspace' });
   }, []);
+  const unlinkWorkspaceFolder = useCallback(
+    () => vscode.postMessage({ command: 'unlinkWorkspaceFolder' }),
+    [],
+  );
   const openWorkspaceFolder = useCallback(
     () => vscode.postMessage({ command: 'openWorkspaceFolder' }),
     [],
@@ -242,6 +246,7 @@ export function useNavigatorController() {
     cloningAll,
     repairWorkspace,
     repairing,
+    unlinkWorkspaceFolder,
     openWorkspaceFolder,
     mcpStatuses,
     pendingAgents,

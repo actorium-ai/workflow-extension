@@ -2,7 +2,7 @@
   "name": "actorium-vscode",
   "displayName": "Actorium Agent",
   "description": "Agent-native delivery system",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "publisher": "actorium-ai",
   "license": "MIT",
   "icon": "media/icon.png",

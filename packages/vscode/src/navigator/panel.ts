@@ -4,7 +4,7 @@ import * as vscode from 'vscode';
 import { getActoriumConfig } from '../config/environment.js';
 import { compareVersions, type VersionChecker } from '../version/checker.js';
 import { buildWebviewHtml } from '../webview-html.js';
-import { getWorkspaceFolder } from '../workspace/folderManager.js';
+import { getWorkspaceFolder, removeWorkspaceFolder } from '../workspace/folderManager.js';
 import {
   type AgentTarget,
   DEFAULT_MCP_NPM_PACKAGE,
@@ -171,6 +171,10 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
 
         case 'repairWorkspace':
           await this._repairWorkspace();
+          break;
+
+        case 'unlinkWorkspaceFolder':
+          await this._unlinkWorkspaceFolder();
           break;
 
         case 'listMcpStatus':
@@ -460,6 +464,28 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
         : 'Actorium: Repaired repo-links.json, AGENTS.md, and workspace.json.',
     );
     this._postMessage({ command: 'repairWorkspaceDone' });
+    await this._loadRepos();
+  }
+
+  /** Confirms (nothing on disk is touched — the folder and every repo
+   * symlinked into it are left alone) then drops the extension's record of
+   * which local folder this workspace is linked to — the section menu's
+   * "Unlink workspace" action. Refreshes the repo list afterward so the
+   * panel falls back to its "link a folder" empty state, same as
+   * _unlinkRepo does for a single repo. */
+  private async _unlinkWorkspaceFolder(): Promise<void> {
+    const workspaceId = this.getWorkspaceId();
+    const folder = workspaceId ? getWorkspaceFolder(this.context, workspaceId) : undefined;
+    if (!workspaceId || !folder) return;
+
+    const confirmed = await vscode.window.showWarningMessage(
+      `Unlink the local folder "${folder}" from this workspace? Nothing on disk will be deleted — you can re-link the same or a different folder later.`,
+      { modal: true },
+      'Unlink',
+    );
+    if (confirmed !== 'Unlink') return;
+
+    await removeWorkspaceFolder(this.context, workspaceId);
     await this._loadRepos();
   }
 

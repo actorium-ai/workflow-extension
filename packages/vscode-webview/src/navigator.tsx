@@ -81,6 +81,7 @@ export function Navigator() {
                     cloningAll={c.cloningAll}
                     onRepair={c.repairWorkspace}
                     repairing={c.repairing}
+                    onUnlinkWorkspace={c.unlinkWorkspaceFolder}
                   />
                 </div>
               ) : undefined

@@ -50,6 +50,22 @@ export function getWorkspaceFolder(
 }
 
 /**
+ * Clears the folder link for `workspaceId` — the inverse of
+ * setWorkspaceFolder/ensureWorkspaceFolder. Nothing on disk is touched (the
+ * folder itself and every repo symlinked into it are left alone); this only
+ * drops the extension's record of where the workspace lives, so the next
+ * ensureWorkspaceFolder call prompts fresh.
+ */
+export async function removeWorkspaceFolder(
+  context: vscode.ExtensionContext,
+  workspaceId: string,
+): Promise<void> {
+  const map = getFolderMap(context);
+  delete map[workspaceId];
+  await context.globalState.update(WORKSPACE_FOLDERS_KEY, map);
+}
+
+/**
  * Ensures `workspaceId` has a local workspace folder linked — a plain
  * container directory (not itself a git repo) that individual project clones
  * get symlinked into (see repoLinker.ts) and where AGENTS.md is generated
