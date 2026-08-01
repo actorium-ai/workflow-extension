@@ -77,6 +77,22 @@ export interface MeResponse {
   memberships: MeMembership[];
 }
 
+/** One logged-in (bffUrl, user) pair the IDE's account switcher can offer —
+ * see AuthManager's account registry (oauth.ts). `id` is
+ * `` `${bffUrl}|${user.id}` ``, computed once the user's identity is known
+ * from a successful /api/me fetch. `workspaceLabel` is best-effort and
+ * folder-local (an account switched to for the first time in a given
+ * folder/window has none yet, since org/workspace selection is scoped
+ * per-folder like everything else). */
+export interface AccountSummary {
+  id: string;
+  bffUrl: string;
+  environmentLabel: string;
+  user: MeUser;
+  workspaceLabel: string | null;
+  isActive: boolean;
+}
+
 export interface WorkspaceSummary {
   id: string;
   organization_id: string;

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import type {
+  AccountSummary,
   AgentStatuses,
   AgentTarget,
   FeatureSummary,
@@ -21,6 +22,8 @@ export function useNavigatorController() {
   const [isConnected, setIsConnected] = useState(false);
   const [workspaceLabel, setWorkspaceLabel] = useState<string | null>(null);
   const [userProfile, setUserProfile] = useState<MeUser | null>(null);
+  const [accounts, setAccounts] = useState<AccountSummary[]>([]);
+  const [sessionExpired, setSessionExpired] = useState(false);
   const [docs, setDocs] = useState<StorageDocument[]>([]);
   const [features, setFeatures] = useState<FeatureSummary[]>([]);
   const [versionBlocked, setVersionBlocked] = useState<VersionEntry | null>(null);
@@ -44,6 +47,15 @@ export function useNavigatorController() {
   const signOut = useCallback(() => vscode.postMessage({ command: 'signOut' }), []);
   const openProfileSettings = useCallback(
     () => vscode.postMessage({ command: 'openProfileSettings' }),
+    [],
+  );
+  const switchAccount = useCallback(
+    (accountId: string) => vscode.postMessage({ command: 'switchAccount', accountId }),
+    [],
+  );
+  const addAccount = useCallback(() => vscode.postMessage({ command: 'addAccount' }), []);
+  const reconnectAccount = useCallback(
+    () => vscode.postMessage({ command: 'reconnectAccount' }),
     [],
   );
 
@@ -147,6 +159,12 @@ export function useNavigatorController() {
         case 'userProfileChanged':
           setUserProfile(msg.profile ?? null);
           break;
+        case 'accountsChanged':
+          setAccounts(msg.accounts || []);
+          break;
+        case 'sessionExpiredChanged':
+          setSessionExpired(!!msg.expired);
+          break;
         case 'docsLoaded':
           setDocs(msg.docs || []);
           break;
@@ -225,12 +243,17 @@ export function useNavigatorController() {
     isConnected,
     workspaceLabel,
     userProfile,
+    accounts,
+    sessionExpired,
     docs,
     features,
     connect,
     switchWorkspace,
     signOut,
     openProfileSettings,
+    switchAccount,
+    addAccount,
+    reconnectAccount,
     openDocument,
     openFeatureDetail,
     openFeaturesBrowser,

@@ -45,8 +45,13 @@ export function Navigator() {
         <WorkspacePill workspaceLabel={c.workspaceLabel} onSwitchWorkspace={c.switchWorkspace} />
         <UserMenu
           profile={c.userProfile}
+          accounts={c.accounts}
+          sessionExpired={c.sessionExpired}
           onSignOut={c.signOut}
           onOpenProfileSettings={c.openProfileSettings}
+          onSwitchAccount={c.switchAccount}
+          onAddAccount={c.addAccount}
+          onReconnect={c.reconnectAccount}
         />
       </div>
 

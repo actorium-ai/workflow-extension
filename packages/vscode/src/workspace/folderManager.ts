@@ -9,9 +9,21 @@ type FolderMap = Record<string, string>;
 
 interface PendingWorkspaceSync {
   folderPath: string;
+  accountId: string;
   workspaceId: string;
   workspaceLabel: string;
   orgId: string | null;
+}
+
+/** Folder-map keys are `${bffUrl}:${workspaceId}`, not just workspaceId —
+ * two different backends (e.g. `local` and `production`) can generate a
+ * workspace with the same ID (plausible for local/seeded dev databases using
+ * small sequential IDs), which would otherwise collide and silently point
+ * two unrelated workspaces at the same folder. Masked before multi-account
+ * support by "one bffUrl per window"; more likely now that one window can
+ * hold accounts on multiple backends. */
+function folderMapKey(bffUrl: string, workspaceId: string): string {
+  return `${bffUrl}:${workspaceId}`;
 }
 
 function getFolderMap(context: vscode.ExtensionContext): FolderMap {
@@ -20,11 +32,12 @@ function getFolderMap(context: vscode.ExtensionContext): FolderMap {
 
 async function setWorkspaceFolder(
   context: vscode.ExtensionContext,
+  bffUrl: string,
   workspaceId: string,
   folderPath: string,
 ): Promise<void> {
   const map = getFolderMap(context);
-  map[workspaceId] = folderPath;
+  map[folderMapKey(bffUrl, workspaceId)] = folderPath;
   await context.globalState.update(WORKSPACE_FOLDERS_KEY, map);
 }
 
@@ -43,9 +56,10 @@ async function setWorkspaceFolder(
  */
 export function getWorkspaceFolder(
   context: vscode.ExtensionContext,
+  bffUrl: string,
   workspaceId: string,
 ): string | undefined {
-  const folder = getFolderMap(context)[workspaceId];
+  const folder = getFolderMap(context)[folderMapKey(bffUrl, workspaceId)];
   return folder && fsSync.existsSync(folder) ? folder : undefined;
 }
 
@@ -58,10 +72,11 @@ export function getWorkspaceFolder(
  */
 export async function removeWorkspaceFolder(
   context: vscode.ExtensionContext,
+  bffUrl: string,
   workspaceId: string,
 ): Promise<void> {
   const map = getFolderMap(context);
-  delete map[workspaceId];
+  delete map[folderMapKey(bffUrl, workspaceId)];
   await context.globalState.update(WORKSPACE_FOLDERS_KEY, map);
 }
 
@@ -80,10 +95,11 @@ export async function removeWorkspaceFolder(
  */
 export async function ensureWorkspaceFolder(
   context: vscode.ExtensionContext,
+  bffUrl: string,
   workspaceId: string,
   workspaceLabel: string,
 ): Promise<string | undefined> {
-  const existing = getWorkspaceFolder(context, workspaceId);
+  const existing = getWorkspaceFolder(context, bffUrl, workspaceId);
   if (existing) return existing;
 
   const picked = await vscode.window.showOpenDialog({
@@ -97,7 +113,7 @@ export async function ensureWorkspaceFolder(
   if (!folderPath) return undefined;
 
   await fs.mkdir(folderPath, { recursive: true });
-  await setWorkspaceFolder(context, workspaceId, folderPath);
+  await setWorkspaceFolder(context, bffUrl, workspaceId, folderPath);
   return folderPath;
 }
 

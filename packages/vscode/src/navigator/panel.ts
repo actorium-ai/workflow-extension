@@ -1,7 +1,6 @@
-import type { MeUser, VersionEntry } from '@workflow-extension/shared';
+import type { AccountSummary, MeUser, VersionEntry } from '@workflow-extension/shared';
 import * as vscode from 'vscode';
 
-import { getActoriumConfig } from '../config/environment.js';
 import { compareVersions, type VersionChecker } from '../version/checker.js';
 import { buildWebviewHtml } from '../webview-html.js';
 import { getWorkspaceFolder, removeWorkspaceFolder } from '../workspace/folderManager.js';
@@ -55,6 +54,8 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
   private _connected = false;
   private _workspaceLabel: string | null = null;
   private _userProfile: MeUser | null = null;
+  private _accounts: AccountSummary[] = [];
+  private _sessionExpired = false;
   private _versionBlockedEntry: VersionEntry | null = null;
   private _pollInterval: NodeJS.Timeout | null = null;
 
@@ -65,6 +66,8 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
     private readonly getWorkspaceId: () => string | null,
     private readonly versionChecker: VersionChecker,
     private readonly regenerateAgentsFile: (folderPath: string) => Promise<void>,
+    private readonly getFrontendUrl: () => string | null,
+    private readonly checkSessionExpiry: () => void,
   ) {}
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -92,6 +95,11 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
         void this._loadDocs();
         void this._loadFeatures();
       }
+      // Piggybacks on this existing tick rather than a dedicated timer — see
+      // AuthManager.checkExpiry()'s doc comment for why this matters (no
+      // token-refresh flow exists, so this is how a mid-session expiry gets
+      // caught instead of only at the next failed request).
+      if (this._connected) this.checkSessionExpiry();
     }, DOCS_FEATURES_POLL_INTERVAL_MS);
     webviewView.onDidDispose(() => {
       if (this._pollInterval) {
@@ -114,9 +122,22 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
           vscode.commands.executeCommand('actorium.disconnect');
           break;
 
+        case 'switchAccount':
+          vscode.commands.executeCommand('actorium.switchAccount', message.accountId);
+          break;
+
+        case 'addAccount':
+          vscode.commands.executeCommand('actorium.addAccount');
+          break;
+
+        case 'reconnectAccount':
+          vscode.commands.executeCommand('actorium.reconnectAccount');
+          break;
+
         case 'openProfileSettings': {
-          const { frontendUrl } = getActoriumConfig();
-          vscode.env.openExternal(vscode.Uri.parse(`${frontendUrl}/settings/profile`));
+          const frontendUrl = this.getFrontendUrl();
+          if (frontendUrl)
+            vscode.env.openExternal(vscode.Uri.parse(`${frontendUrl}/settings/profile`));
           break;
         }
 
@@ -265,7 +286,9 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
 
   private async _loadRepos(): Promise<void> {
     const workspaceId = this.getWorkspaceId();
-    const folder = workspaceId ? getWorkspaceFolder(this.context, workspaceId) : undefined;
+    const folder = workspaceId
+      ? getWorkspaceFolder(this.context, this.codingApiCtx.getBffUrl(), workspaceId)
+      : undefined;
     const [linked, workspaceRepos, repoLinkManifest] = await Promise.all([
       folder ? listLinkedRepos(folder) : Promise.resolve([]),
       workspaceId
@@ -327,7 +350,9 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
    * success, same as every other repo-state-changing op. */
   private async _unlinkRepo(name: string): Promise<void> {
     const workspaceId = this.getWorkspaceId();
-    const folder = workspaceId ? getWorkspaceFolder(this.context, workspaceId) : undefined;
+    const folder = workspaceId
+      ? getWorkspaceFolder(this.context, this.codingApiCtx.getBffUrl(), workspaceId)
+      : undefined;
     if (!folder) return;
 
     const confirmed = await vscode.window.showWarningMessage(
@@ -355,7 +380,9 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
    * failure is a backstop for the per-row path, which has no modal open. */
   private async _cloneRepo(url: string, name?: string): Promise<void> {
     const workspaceId = this.getWorkspaceId();
-    const folder = workspaceId ? getWorkspaceFolder(this.context, workspaceId) : undefined;
+    const folder = workspaceId
+      ? getWorkspaceFolder(this.context, this.codingApiCtx.getBffUrl(), workspaceId)
+      : undefined;
     if (!folder) {
       this._postMessage({
         command: 'cloneRepoResult',
@@ -381,7 +408,9 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
    * since there's no modal open for this path to show it inline. */
   private async _cloneAllRepos(): Promise<void> {
     const workspaceId = this.getWorkspaceId();
-    const folder = workspaceId ? getWorkspaceFolder(this.context, workspaceId) : undefined;
+    const folder = workspaceId
+      ? getWorkspaceFolder(this.context, this.codingApiCtx.getBffUrl(), workspaceId)
+      : undefined;
     if (!folder || !workspaceId) {
       this._postMessage({ command: 'cloneAllReposDone' });
       return;
@@ -433,7 +462,9 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
    * permanent "unlink" rows the user can never clear. */
   private async _repairWorkspace(): Promise<void> {
     const workspaceId = this.getWorkspaceId();
-    const folder = workspaceId ? getWorkspaceFolder(this.context, workspaceId) : undefined;
+    const folder = workspaceId
+      ? getWorkspaceFolder(this.context, this.codingApiCtx.getBffUrl(), workspaceId)
+      : undefined;
     if (!folder || !workspaceId) {
       vscode.window.showWarningMessage('Actorium: Connect and select a workspace first.');
       this._postMessage({ command: 'repairWorkspaceDone' });
@@ -475,7 +506,9 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
    * _unlinkRepo does for a single repo. */
   private async _unlinkWorkspaceFolder(): Promise<void> {
     const workspaceId = this.getWorkspaceId();
-    const folder = workspaceId ? getWorkspaceFolder(this.context, workspaceId) : undefined;
+    const folder = workspaceId
+      ? getWorkspaceFolder(this.context, this.codingApiCtx.getBffUrl(), workspaceId)
+      : undefined;
     if (!workspaceId || !folder) return;
 
     const confirmed = await vscode.window.showWarningMessage(
@@ -485,7 +518,7 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
     );
     if (confirmed !== 'Unlink') return;
 
-    await removeWorkspaceFolder(this.context, workspaceId);
+    await removeWorkspaceFolder(this.context, this.codingApiCtx.getBffUrl(), workspaceId);
     await this._loadRepos();
   }
 
@@ -495,7 +528,9 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
    * just for opening the sidebar. */
   private async _loadMcpStatus(): Promise<void> {
     const workspaceId = this.getWorkspaceId();
-    const folder = workspaceId ? getWorkspaceFolder(this.context, workspaceId) : undefined;
+    const folder = workspaceId
+      ? getWorkspaceFolder(this.context, this.codingApiCtx.getBffUrl(), workspaceId)
+      : undefined;
     if (!folder) {
       this._postMessage({ command: 'mcpStatusLoaded', statuses: {} });
       return;
@@ -555,7 +590,9 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
     if (result.ok) {
       vscode.window.showInformationMessage(`Actorium: ${result.message}`);
       const workspaceId = this.getWorkspaceId();
-      const folder = workspaceId ? getWorkspaceFolder(this.context, workspaceId) : undefined;
+      const folder = workspaceId
+        ? getWorkspaceFolder(this.context, this.codingApiCtx.getBffUrl(), workspaceId)
+        : undefined;
       if (folder) await this.regenerateAgentsFile(folder);
     } else {
       vscode.window.showErrorMessage(`Actorium: ${result.message}`);
@@ -565,7 +602,9 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
 
   private currentWorkspaceFolder(): string | undefined {
     const workspaceId = this.getWorkspaceId();
-    return workspaceId ? getWorkspaceFolder(this.context, workspaceId) : undefined;
+    return workspaceId
+      ? getWorkspaceFolder(this.context, this.codingApiCtx.getBffUrl(), workspaceId)
+      : undefined;
   }
 
   /** Checks how many of the bundled technical skills are already copied
@@ -628,6 +667,8 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
     this._postMessage({ command: 'connectionChanged', connected: this._connected });
     this._postMessage({ command: 'workspaceLabelChanged', label: this._workspaceLabel });
     this._postMessage({ command: 'userProfileChanged', profile: this._userProfile });
+    this._postMessage({ command: 'accountsChanged', accounts: this._accounts });
+    this._postMessage({ command: 'sessionExpiredChanged', expired: this._sessionExpired });
     if (this._versionBlockedEntry) {
       this._postMessage({ command: 'versionBlocked', entry: this._versionBlockedEntry });
     }
@@ -648,6 +689,27 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
   setUserProfile(profile: MeUser | null): void {
     this._userProfile = profile;
     this._postMessage({ command: 'userProfileChanged', profile });
+  }
+
+  /** Update the account switcher's list — every account this machine has
+   * stored credentials for, with which one is currently active. Refreshed
+   * alongside every connection/profile/workspace change (see extension.ts),
+   * since the account list effectively changes exactly when those do. */
+  setAccounts(accounts: AccountSummary[]): void {
+    this._accounts = accounts;
+    this._postMessage({ command: 'accountsChanged', accounts });
+  }
+
+  /** Mirrors AuthManager.isSessionExpired() into the webview — pushed
+   * alongside every connection/profile/workspace/account change (see
+   * extension.ts) rather than solely from the one-shot onSessionExpired
+   * callback, so the banner always reflects the CURRENT value regardless of
+   * which event last fired (a switch/reconnect that immediately re-expires,
+   * or one that recovers, both need this to read the authoritative value
+   * rather than assume true/false from context). */
+  setSessionExpired(expired: boolean): void {
+    this._sessionExpired = expired;
+    this._postMessage({ command: 'sessionExpiredChanged', expired });
   }
 
   /** Shows a persistent, non-dismissible block overlay when the extension

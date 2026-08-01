@@ -46,6 +46,26 @@ export interface ActoriumConfig {
   clientId: string;
 }
 
+/** Derives the per-service BFF URLs from a bare bffUrl origin — factored out
+ * of getActoriumConfig() so callers with an explicit bffUrl (an account that
+ * isn't necessarily the globally-selected environment, e.g. AuthManager
+ * acting on a non-active account, or workflow-api.ts's per-account data
+ * fetches) can derive the same URLs without going through the
+ * globally-selected environment/settings-override path below. */
+export function deriveServiceUrls(bffUrl: string): {
+  userServiceUrl: string;
+  agentUrl: string;
+  workflowBackendUrl: string;
+  storageServiceUrl: string;
+} {
+  return {
+    userServiceUrl: `${bffUrl}${USER_SERVICE_PATH}`,
+    agentUrl: `${bffUrl}${HERMES_AGENT_PATH}`,
+    workflowBackendUrl: `${bffUrl}${WORKFLOW_BACKEND_PATH}`,
+    storageServiceUrl: `${bffUrl}${STORAGE_SERVICE_PATH}`,
+  };
+}
+
 const SELECTED_ENVIRONMENT_KEY = 'actorium.selectedEnvironment';
 
 let _context: vscode.ExtensionContext | undefined;
@@ -94,10 +114,19 @@ export function getActoriumConfig(): ActoriumConfig {
     environment,
     bffUrl,
     frontendUrl: config.get<string>('frontendUrl') || defaults.frontendUrl,
-    userServiceUrl: `${bffUrl}${USER_SERVICE_PATH}`,
-    agentUrl: `${bffUrl}${HERMES_AGENT_PATH}`,
-    workflowBackendUrl: `${bffUrl}${WORKFLOW_BACKEND_PATH}`,
-    storageServiceUrl: `${bffUrl}${STORAGE_SERVICE_PATH}`,
+    ...deriveServiceUrls(bffUrl),
     clientId: config.get<string>('clientId') || defaults.clientId,
   };
+}
+
+/**
+ * Resolves a specific environment's fixed defaults directly from
+ * `ENVIRONMENTS`, ignoring any `actorium.bffUrl`/`frontendUrl`/`clientId`
+ * settings.json override. Used only when adding a second (or later) account
+ * via the account switcher's "Add another account" — those overrides only
+ * make sense as "override the currently-selected environment," not as a
+ * silent override of an explicitly-picked new account's backend.
+ */
+export function configForEnvironment(environment: ActoriumEnvironment): EnvironmentDefaults {
+  return ENVIRONMENTS[environment] ?? ENVIRONMENTS.production;
 }

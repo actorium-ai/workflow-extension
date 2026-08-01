@@ -1,4 +1,5 @@
 import type {
+  AccountSummary,
   ActivityEvent,
   FeatureHandoff,
   FeatureSummary,
@@ -12,6 +13,7 @@ import type {
 } from '@workflow-extension/shared';
 
 export type {
+  AccountSummary,
   ActivityEvent,
   FeatureHandoff,
   FeatureSummary,

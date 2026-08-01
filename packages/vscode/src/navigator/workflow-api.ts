@@ -11,7 +11,7 @@ import type {
   WorkspaceRepo,
 } from '@workflow-extension/shared';
 
-import { getActoriumConfig } from '../config/environment.js';
+import { deriveServiceUrls } from '../config/environment.js';
 
 /**
  * Fetch helpers for the Navigator's docs/features data. Both reuse the SAME
@@ -25,18 +25,33 @@ export interface CodingApiConfig {
   getToken: () => Promise<string | null>;
   workflowBackendUrl: string;
   storageServiceUrl: string;
+  onUnauthorized: () => void;
 }
 
 /** How a webview panel provider reaches per-caller identity/workspace — small
- * enough to pass directly rather than injecting the whole AuthManager. */
+ * enough to pass directly rather than injecting the whole AuthManager.
+ * getBffUrl() is the ACTIVE ACCOUNT's own bffUrl (AuthManager.getBffUrl()) —
+ * NOT the globally-selected environment — since the active account isn't
+ * necessarily on that environment once multiple accounts across different
+ * backends can be signed in at once. onUnauthorized() reports a real 401 back
+ * to AuthManager (see its reportUnauthorized()) so a stale/expired token
+ * surfaces as a clear "reconnect" prompt instead of silently rendering empty
+ * docs/features lists. */
 export interface CodingApiContext {
   getToken: () => Promise<string | null>;
   getWorkspaceId: () => string | null;
+  getBffUrl: () => string;
+  onUnauthorized: () => void;
 }
 
 export function codingApiConfig(ctx: CodingApiContext): CodingApiConfig {
-  const { workflowBackendUrl, storageServiceUrl } = getActoriumConfig();
-  return { getToken: ctx.getToken, workflowBackendUrl, storageServiceUrl };
+  const { workflowBackendUrl, storageServiceUrl } = deriveServiceUrls(ctx.getBffUrl());
+  return {
+    getToken: ctx.getToken,
+    workflowBackendUrl,
+    storageServiceUrl,
+    onUnauthorized: ctx.onUnauthorized,
+  };
 }
 
 async function authedFetch(
@@ -46,11 +61,13 @@ async function authedFetch(
 ): Promise<Response | null> {
   const token = await config.getToken();
   if (!token) return null;
-  return fetch(url, {
+  const resp = await fetch(url, {
     ...init,
     headers: { ...init?.headers, Authorization: `Bearer ${token}`, Accept: 'application/json' },
     signal: AbortSignal.timeout(10_000),
   });
+  if (resp.status === 401) config.onUnauthorized();
+  return resp;
 }
 
 /** GET /api/workspaces/{id} — workspace detail including features (the SAME
