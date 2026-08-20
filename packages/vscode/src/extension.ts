@@ -508,11 +508,12 @@ function showSessionExpiredPrompt(): void {
     });
 }
 
-/** Re-checks the active account's cached token expiry against the clock and
- * mirrors the result into the webview — passed into NavigatorPanelProvider so
- * its existing poll loop (panel.ts, already ticking every 30s while the
- * sidebar is visible) can catch a token expiring mid-session without a
- * dedicated timer of its own. */
+/** Re-derives the active account's session state (renewing silently if the
+ * token is near expiry — see AuthManager.checkExpiry) and mirrors the result
+ * into the webview. Passed into NavigatorPanelProvider so its existing poll
+ * loop (panel.ts, already ticking every 30s while the sidebar is visible)
+ * doubles as the safety net for a machine resumed from sleep, where
+ * AuthManager's own renewal timer was frozen while the clock ran on. */
 function checkSessionExpiry(): void {
   authManager.checkExpiry();
   navigatorProvider?.setSessionExpired(authManager.isSessionExpired());
@@ -578,10 +579,17 @@ export function activate(context: vscode.ExtensionContext): void {
   // fires only once per expiry and the banner needs to reflect the current
   // state on every subsequent connect/switch too.
   authManager.onSessionExpired(() => showSessionExpiredPrompt());
+  // The inverse transition: another window renewed the shared token, so the
+  // banner this window is showing is stale (see AuthManager.onSessionRestored).
+  // Silent on purpose — nothing was asked of the user, so nothing needs saying.
+  authManager.onSessionRestored(() => navigatorProvider?.setSessionExpired(false));
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider('actorium.navigatorPanel', navigatorProvider),
     vscode.workspace.registerTextDocumentContentProvider(ACTORIUM_DOC_SCHEME, docContentProvider),
+    // Owns a renewal timer and a SecretStorage listener now, so it has to be
+    // torn down on reload rather than left firing against a dead instance.
+    authManager,
   );
 
   // ── 2. Commands ─────────────────────────────────────────────────────────
@@ -743,4 +751,5 @@ export function activate(context: vscode.ExtensionContext): void {
 
 export function deactivate(): void {
   versionChecker?.dispose();
+  authManager?.dispose();
 }

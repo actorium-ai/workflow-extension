@@ -43,6 +43,12 @@ export interface TokenResponse {
   access_token: string;
   token_type: string;
   expires_in: number;
+  /** Rotating and single-use: every `grant_type=refresh_token` exchange
+   * spends the presented token and returns a NEW one here, so a client MUST
+   * persist this value or lose the ability to renew. Absent when the backend
+   * has no refresh store configured, in which case the session simply ends
+   * at `expires_in` and the user re-authorizes through the device flow.
+   * See workflow-bff's internal/pkg/repository/refreshtoken. */
   refresh_token?: string;
 }
 
