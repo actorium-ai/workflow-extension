@@ -58,6 +58,7 @@ export function useNavigatorController() {
     () => vscode.postMessage({ command: 'reconnectAccount' }),
     [],
   );
+  const reload = useCallback(() => vscode.postMessage({ command: 'reload' }), []);
 
   const requestDocs = useCallback(() => vscode.postMessage({ command: 'listDocs' }), []);
   const requestFeatures = useCallback(() => vscode.postMessage({ command: 'listFeatures' }), []);
@@ -254,6 +255,7 @@ export function useNavigatorController() {
     switchAccount,
     addAccount,
     reconnectAccount,
+    reload,
     openDocument,
     openFeatureDetail,
     openFeaturesBrowser,

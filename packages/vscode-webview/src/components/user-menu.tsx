@@ -1,5 +1,5 @@
 import { Popover } from '@heroui/react';
-import { LogOut, Plus, RefreshCw, UserCircle } from 'lucide-react';
+import { LogOut, Plus, RefreshCw, RotateCw, UserCircle } from 'lucide-react';
 import { useState } from 'react';
 
 import { deriveIconColor } from '../utils/icon-colors.ts';
@@ -64,6 +64,7 @@ export function UserMenu({
   onSwitchAccount,
   onAddAccount,
   onReconnect,
+  onReload,
 }: {
   profile: MeUser | null;
   accounts: AccountSummary[];
@@ -73,6 +74,7 @@ export function UserMenu({
   onSwitchAccount: (accountId: string) => void;
   onAddAccount: () => void;
   onReconnect: () => void;
+  onReload: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const name = profile?.display_name || profile?.email || 'Actorium account';
@@ -164,6 +166,17 @@ export function UserMenu({
           >
             <UserCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
             Profile settings
+          </button>
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 border-b border-border px-3 py-2 text-left text-xs text-text-secondary hover:bg-surface-secondary hover:text-text-primary"
+            onClick={() => {
+              setOpen(false);
+              onReload();
+            }}
+          >
+            <RotateCw className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            Reload window
           </button>
           <button
             type="button"

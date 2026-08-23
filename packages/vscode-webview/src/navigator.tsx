@@ -52,6 +52,7 @@ export function Navigator() {
           onSwitchAccount={c.switchAccount}
           onAddAccount={c.addAccount}
           onReconnect={c.reconnectAccount}
+          onReload={c.reload}
         />
       </div>
 

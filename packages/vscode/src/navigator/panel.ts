@@ -134,6 +134,10 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
           vscode.commands.executeCommand('actorium.reconnectAccount');
           break;
 
+        case 'reload':
+          vscode.commands.executeCommand('workbench.action.reloadWindow');
+          break;
+
         case 'openProfileSettings': {
           const frontendUrl = this.getFrontendUrl();
           if (frontendUrl)
