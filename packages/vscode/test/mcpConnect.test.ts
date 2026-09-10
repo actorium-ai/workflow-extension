@@ -12,11 +12,13 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
+import { accountKeyFor } from '../src/auth/credentialFile.js';
 import {
   connectOpencode,
   disconnectOpencode,
   getMcpCliStatus,
   getOpencodeStatus,
+  reconcileRegisteredAgents,
 } from '../src/workspace/mcpConnect.js';
 
 const tempDir = mkdtempSync(join(tmpdir(), 'actorium-mcpconnect-test-'));
@@ -119,6 +121,68 @@ async function run(): Promise<void> {
     const result = await disconnectOpencode(tempDir);
     ok(result.ok);
     ok(result.message.includes('was not registered'));
+  }
+
+  // connectOpencode bakes ACTORIUM_ACCOUNT_KEY into the environment when an
+  // accountId is given, hashed the same way credentialFile.ts's
+  // accountKeyFor does — never the raw account id (see mcpConnect.ts's
+  // accountEnvArgs doc comment).
+  {
+    const result = await connectOpencode(
+      tempDir,
+      'http://localhost:8090',
+      'acct-1|user@example.com',
+    );
+    ok(result.ok);
+
+    const config = JSON.parse(readFileSync(configPath, 'utf8'));
+    deepStrictEqual(config.mcp['actorium-mcp'].environment, {
+      API_URL: 'http://localhost:8090',
+      ACTORIUM_ACCOUNT_KEY: accountKeyFor('acct-1|user@example.com'),
+    });
+  }
+
+  // Omitting accountId keeps the environment exactly as before (back-compat).
+  {
+    const result = await connectOpencode(tempDir, 'http://localhost:8090');
+    ok(result.ok);
+
+    const config = JSON.parse(readFileSync(configPath, 'utf8'));
+    deepStrictEqual(config.mcp['actorium-mcp'].environment, { API_URL: 'http://localhost:8090' });
+  }
+
+  // reconcileRegisteredAgents re-registers only already-registered agents,
+  // with the new bffUrl/accountId, and leaves an unregistered agent alone.
+  {
+    await disconnectOpencode(tempDir);
+    await connectOpencode(tempDir, 'http://old.example.com');
+
+    const reconciled = await reconcileRegisteredAgents(tempDir, 'http://new.example.com', 'acct-2');
+    ok(reconciled.includes('opencode'), 'opencode was registered, so it should be reconciled');
+
+    const config = JSON.parse(readFileSync(configPath, 'utf8'));
+    deepStrictEqual(config.mcp['actorium-mcp'].environment, {
+      API_URL: 'http://new.example.com',
+      ACTORIUM_ACCOUNT_KEY: accountKeyFor('acct-2'),
+    });
+  }
+
+  // reconcileRegisteredAgents leaves opencode untouched when it was never
+  // registered in this folder.
+  {
+    const unregisteredDir = mkdtempSync(join(tmpdir(), 'actorium-mcpconnect-unreg-'));
+    try {
+      const reconciled = await reconcileRegisteredAgents(
+        unregisteredDir,
+        'http://new.example.com',
+        'acct-2',
+      );
+      ok(!reconciled.includes('opencode'));
+      const status = await getOpencodeStatus(unregisteredDir);
+      deepStrictEqual(status, { registered: false });
+    } finally {
+      rmSync(unregisteredDir, { recursive: true, force: true });
+    }
   }
 
   // getMcpCliStatus shells out to the real `actorium-mcp` binary — whether

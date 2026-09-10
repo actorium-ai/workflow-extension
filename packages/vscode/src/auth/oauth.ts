@@ -11,7 +11,11 @@ import type {
 import * as vscode from 'vscode';
 
 import { deriveServiceUrls, ENVIRONMENTS, getActoriumConfig } from '../config/environment.js';
-import { deleteCredentialFile, writeCredentialFile } from './credentialFile.js';
+import {
+  deleteAccountCredentialFile,
+  deleteCredentialFile,
+  writeCredentialFile,
+} from './credentialFile.js';
 
 const SECRET_KEY_PREFIX = 'actorium.authToken';
 const REFRESH_SECRET_KEY_PREFIX = 'actorium.refreshToken';
@@ -394,6 +398,15 @@ export class AuthManager {
     return this._bffUrl;
   }
 
+  /** Best-effort display label for whichever backend this window is
+   * currently scoped to — meaningful even before any account is signed in
+   * for it (unlike AccountSummary.environmentLabel, which only exists for a
+   * KNOWN account), so the pre-connect AuthPrompt can say which backend a
+   * "Connect" click is about to authenticate against. */
+  getEnvironmentLabel(): string {
+    return environmentLabelForBffUrl(this._bffUrl);
+  }
+
   /** Returns the active account's own frontend URL (captured at that
    * account's login time), or null if no account is active — used for
    * "Profile settings" links instead of the globally-selected environment's
@@ -721,6 +734,14 @@ export class AuthManager {
    * workspaceLabel is best-effort and folder-local: an account switched to
    * for the first time in this folder/window shows null until switchWorkspace()
    * or a restored selection populates it.
+   *
+   * sessionExpired for the active account reflects live renewal state
+   * (`_sessionExpired`, kept current by the proactive refresh timer/reactive
+   * 401 handling). Every OTHER account is never proactively renewed — only
+   * the active one gets a refresh timer (see _scheduleRefresh) — so its
+   * expiresAt is a last-known value that goes genuinely stale over time; a
+   * clock-only check against it is the right (and only) signal available
+   * without spending a network call per listed account just to render a menu.
    */
   listAccounts(): AccountSummary[] {
     const registry = this._readRegistry();
@@ -738,6 +759,10 @@ export class AuthManager {
                 this._keyForAccount(WORKSPACE_LABEL_KEY, meta.id),
               ) ?? null),
         isActive: meta.id === this._activeAccountId,
+        sessionExpired:
+          meta.id === this._activeAccountId
+            ? this._sessionExpired
+            : meta.expiresAt !== undefined && Date.now() >= meta.expiresAt,
       }));
   }
 
@@ -1097,15 +1122,15 @@ export class AuthManager {
 
   /**
    * Mirrors the active account's current token/org/workspace state to the
-   * credential file workflow-mcp reads for its bffUrl (see credentialFile.ts)
-   * — called on every state change (connect, switch, workspace switch,
-   * disconnect, environment switch) that also touches secrets/workspaceState
-   * above. The file is keyed by bffUrl only, with no accountId concept (the
-   * CLI has no way to know "which VS Code account" beyond its own API_URL
-   * env var) — "last active account for that bffUrl wins the file" is an
-   * accepted limitation, not a bug: two windows/accounts both active on the
-   * SAME backend will still fight over this one file, same as before
-   * multi-account existed.
+   * credential file(s) workflow-mcp reads (see credentialFile.ts) — called on
+   * every state change (connect, switch, workspace switch, disconnect,
+   * environment switch) that also touches secrets/workspaceState above.
+   * Writes the legacy bffUrl-only file (still "last active account for that
+   * bffUrl wins", for any MCP registration made before per-account files
+   * existed) AND, since accountId is known here, an account-scoped file a
+   * registration can opt into via ACTORIUM_ACCOUNT_KEY (see mcpConnect.ts) so
+   * two windows/accounts active on the SAME backend stop fighting over one
+   * file once they've reconnected with that env var present.
    */
   private async _syncCredentialFile(): Promise<void> {
     if (!this._token) {
@@ -1118,6 +1143,9 @@ export class AuthManager {
       workspaceId: this._selectedWorkspaceId ?? undefined,
       bffUrl: this._bffUrl,
       updatedAt: Date.now(),
+      accountId: this._activeAccountId ?? undefined,
+      accountEmail: this._userProfile?.email,
+      accountDisplayName: this._userProfile?.display_name,
     });
   }
 
@@ -1141,6 +1169,12 @@ export class AuthManager {
     const meta = registry[targetId];
     delete registry[targetId];
     await this.context.globalState.update(ACCOUNTS_KEY, registry);
+
+    // The per-account credential file is meaningless the instant this
+    // account is gone, regardless of whether a sibling account on the same
+    // backend survives (unlike the legacy bffUrl-only file below, which is
+    // only removed once NO account remains for that backend).
+    if (meta) await deleteAccountCredentialFile(meta.bffUrl, targetId);
 
     // Read the refresh token before deleting it — signing out should also
     // kill it server-side, so a copy left in a backup or another machine's

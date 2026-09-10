@@ -70,6 +70,35 @@ async function authedFetch(
   return resp;
 }
 
+/**
+ * A section's fetch outcome, distinguishing "genuinely empty" from "the call
+ * failed" — `authedFetch` collapsing every failure (no token, non-2xx,
+ * network error/timeout) down to a bare `null` meant panel.ts's callers
+ * could only ever coalesce that to `[]`, so a broken fetch and an empty
+ * workspace rendered identically in the Navigator's Docs/Features/Workspace
+ * sections. Used by listDocuments/listFeatures/getWorkspaceRepos below —
+ * the three that directly back those sections — not the whole module,
+ * since the feature-detail/task-detail fetches already have their own
+ * null-means-"not found or not decodable" contract callers rely on.
+ */
+export type SectionResult<T> = { ok: true; data: T } | { ok: false; reason: string };
+
+/** Best-effort human-readable reason for a section fetch failure — no token
+ * (signed out or mid-reconnect), a non-2xx status, or the fetch throwing
+ * (network error, DNS, the 10s AbortSignal timeout). */
+async function toSectionResult<T>(
+  resp: Response | null,
+  parse: (resp: Response) => Promise<T>,
+): Promise<SectionResult<T>> {
+  if (!resp) return { ok: false, reason: 'not_signed_in' };
+  if (!resp.ok) return { ok: false, reason: `request_failed_${resp.status}` };
+  try {
+    return { ok: true, data: await parse(resp) };
+  } catch {
+    return { ok: false, reason: 'invalid_response' };
+  }
+}
+
 /** GET /api/workspaces/{id} — workspace detail including features (the SAME
  * endpoint the browser hits). */
 export async function getWorkspaceDetail(
@@ -85,13 +114,25 @@ export async function getWorkspaceDetail(
   return body.data;
 }
 
-/** Convenience wrapper — just the features array from getWorkspaceDetail. */
+/**
+ * Convenience wrapper — just the features array from the same workspace-
+ * detail endpoint as getWorkspaceDetail. Returns a SectionResult (not a bare
+ * `T | null` like getWorkspaceDetail) since this backs the Navigator's
+ * Features section directly — see SectionResult's doc comment for why that
+ * distinction matters there specifically.
+ */
 export async function listFeatures(
   config: CodingApiConfig,
   workspaceId: string,
-): Promise<FeatureSummary[] | null> {
-  const detail = await getWorkspaceDetail(config, workspaceId);
-  return detail?.features ?? null;
+): Promise<SectionResult<FeatureSummary[]>> {
+  const resp = await authedFetch(
+    config,
+    `${config.workflowBackendUrl}/api/workspaces/${workspaceId}`,
+  );
+  return toSectionResult(resp, async (r) => {
+    const body = (await r.json()) as ApiSuccessResponse<WorkspaceDetail>;
+    return body.data.features;
+  });
 }
 
 /** GET /api/workspaces/{wid}/activity?featureId=... — a feature's activity
@@ -202,18 +243,20 @@ export async function getWorkspaceRepos(
 }
 
 /** GET /api/workspaces/{id}/documents — every doc in the workspace (the SAME
- * endpoint the browser hits). */
+ * endpoint the browser hits). Returns a SectionResult (see its doc comment)
+ * since this backs the Navigator's Docs section directly. */
 export async function listDocuments(
   config: CodingApiConfig,
   workspaceId: string,
-): Promise<StorageDocument[] | null> {
+): Promise<SectionResult<StorageDocument[]>> {
   const resp = await authedFetch(
     config,
     `${config.storageServiceUrl}/api/workspaces/${workspaceId}/documents`,
   );
-  if (!resp?.ok) return null;
-  const body = (await resp.json()) as { documents: StorageDocument[] };
-  return body.documents;
+  return toSectionResult(resp, async (r) => {
+    const body = (await r.json()) as { documents: StorageDocument[] };
+    return body.documents;
+  });
 }
 
 /**

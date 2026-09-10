@@ -11,6 +11,7 @@ import {
   initEnvironmentStore,
   setSelectedEnvironment,
 } from './config/environment.js';
+import { GitPanelProvider } from './git/gitPanel.js';
 import { ACTORIUM_DOC_SCHEME, DocContentProvider } from './navigator/doc-content-provider.js';
 import { NavigatorPanelProvider } from './navigator/panel.js';
 import { codingApiConfig, getWorkspaceRepos } from './navigator/workflow-api.js';
@@ -34,7 +35,13 @@ import {
   envWithPnpmBin,
   genericMcpConfigSnippet,
   type McpConnectResult,
+  reconcileRegisteredAgents,
 } from './workspace/mcpConnect.js';
+import {
+  clearMcpRegistration,
+  recordAgentSessionOpened,
+  recordMcpRegistration,
+} from './workspace/mcpRegistrationState.js';
 import { addRepo } from './workspace/repoLinker.js';
 import { readBundledSharedRules, writeWorkflowRules } from './workspace/workflowRules.js';
 import { writeWorkspaceManifest } from './workspace/workspaceManifest.js';
@@ -190,6 +197,44 @@ async function syncWindowToWorkspace(workspaceId: string): Promise<void> {
   await openWorkspaceFolderInThisWindow(folderPath);
 }
 
+/** Dedupe key for reconcileMcpForCurrentAccount — avoids re-running the
+ * reconcile (and re-showing its toast) on every unrelated onConnected/
+ * onWorkspaceChanged firing when neither bffUrl nor the active account
+ * actually changed since the last time it ran. */
+let lastReconciledMcpKey: string | null = null;
+
+/**
+ * Keeps this folder's already-registered agents (Claude Code/Codex/opencode)
+ * pointed at whichever account/backend is now active, after an account,
+ * workspace, or environment switch — see mcpConnect.ts's
+ * reconcileRegisteredAgents for what "keeps pointed at" can and can't mean
+ * (it rewrites the on-disk config; it cannot hot-patch an already-running
+ * CLI session). A same-account token renewal never reaches here — that's
+ * handled transparently by workflow-mcp re-reading its credential file per
+ * call, no restart needed.
+ */
+async function reconcileMcpForCurrentAccount(): Promise<void> {
+  const bffUrl = authManager.getBffUrl();
+  const accountId = authManager.getActiveAccountId() ?? undefined;
+  const key = `${bffUrl}::${accountId ?? ''}`;
+  if (key === lastReconciledMcpKey) return;
+  lastReconciledMcpKey = key;
+
+  const workspaceId = authManager.getWorkspaceId();
+  const folderPath = workspaceId ? getWorkspaceFolder(extContext, bffUrl, workspaceId) : undefined;
+  if (!folderPath) return;
+
+  const reconciled = await reconcileRegisteredAgents(folderPath, bffUrl, accountId);
+  if (reconciled.length === 0) return;
+
+  await Promise.all(reconciled.map((target) => recordCurrentMcpRegistration(folderPath, target)));
+  navigatorProvider?.setMcpConfigUpdatedAt(Date.now());
+  vscode.window.showInformationMessage(
+    `Actorium: Updated MCP config for ${reconciled.map((t) => AGENT_CLI_LABEL[t]).join(', ')} to use ` +
+      'this account. Restart any already-running session there to pick it up.',
+  );
+}
+
 /** Dispatches to the right connect function for one agent target — shared
  * by the Command Palette's multi-target picker and the Navigator webview's
  * per-agent "Connect" button (which already knows which target it wants,
@@ -198,15 +243,34 @@ function connectAgentByTarget(
   target: AgentTarget,
   folderPath: string,
   bffUrl: string,
+  accountId?: string,
 ): Promise<McpConnectResult> {
   switch (target) {
     case 'claude':
-      return connectClaudeCode(folderPath, bffUrl);
+      return connectClaudeCode(folderPath, bffUrl, accountId);
     case 'codex':
-      return connectCodex(folderPath, bffUrl);
+      return connectCodex(folderPath, bffUrl, accountId);
     case 'opencode':
-      return connectOpencode(folderPath, bffUrl);
+      return connectOpencode(folderPath, bffUrl, accountId);
   }
+}
+
+/** Records which account/workspace `target`'s registration in `folderPath`
+ * was just written for — see mcpRegistrationState.ts. Called after every
+ * successful connect/reconcile so panel.ts can later detect drift. */
+async function recordCurrentMcpRegistration(
+  folderPath: string,
+  target: AgentTarget,
+): Promise<void> {
+  await recordMcpRegistration(extContext, folderPath, target, {
+    bffUrl: authManager.getBffUrl(),
+    accountId: authManager.getActiveAccountId() ?? undefined,
+    accountLabel:
+      authManager.getUserProfile()?.display_name ||
+      authManager.getUserProfile()?.email ||
+      undefined,
+    workspaceLabel: authManager.getWorkspaceLabel() ?? undefined,
+  });
 }
 
 function disconnectAgentByTarget(
@@ -276,17 +340,20 @@ async function addMcpServer(): Promise<void> {
   );
   if (!picked) return;
 
+  const accountId = authManager.getActiveAccountId() ?? undefined;
+
   if (picked.target === 'generic') {
-    await vscode.env.clipboard.writeText(genericMcpConfigSnippet(bffUrl));
+    await vscode.env.clipboard.writeText(genericMcpConfigSnippet(bffUrl, accountId));
     vscode.window.showInformationMessage(
       "Actorium: MCP config copied to clipboard — paste it into your tool's MCP configuration.",
     );
     return;
   }
 
-  const result = await connectAgentByTarget(picked.target, folderPath, bffUrl);
+  const result = await connectAgentByTarget(picked.target, folderPath, bffUrl, accountId);
   if (result.ok) {
     vscode.window.showInformationMessage(`Actorium: ${result.message}`);
+    await recordCurrentMcpRegistration(folderPath, picked.target);
   } else {
     vscode.window.showErrorMessage(`Actorium: ${result.message}`);
   }
@@ -544,6 +611,13 @@ export function activate(context: vscode.ExtensionContext): void {
     regenerateAgentsFile,
     () => authManager.getFrontendUrl(),
     checkSessionExpiry,
+    () => authManager.getEnvironmentLabel(),
+  );
+
+  const gitPanelProvider = new GitPanelProvider(
+    context,
+    () => authManager.getWorkspaceId(),
+    () => authManager.getBffUrl(),
   );
 
   authManager.onConnected(() => {
@@ -555,6 +629,7 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!authManager.getWorkspaceId()) {
       void authManager.switchWorkspace();
     }
+    void reconcileMcpForCurrentAccount();
   });
   authManager.onDisconnected(() => {
     navigatorProvider?.setConnected(false);
@@ -567,6 +642,7 @@ export function activate(context: vscode.ExtensionContext): void {
     navigatorProvider?.setSessionExpired(authManager.isSessionExpired());
     const workspaceId = authManager.getWorkspaceId();
     if (workspaceId) void syncWindowToWorkspace(workspaceId);
+    void reconcileMcpForCurrentAccount();
   });
   authManager.onProfileChanged((profile) => {
     navigatorProvider?.setUserProfile(profile);
@@ -586,6 +662,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider('actorium.navigatorPanel', navigatorProvider),
+    vscode.window.registerWebviewViewProvider('actorium.gitPanel', gitPanelProvider),
     vscode.workspace.registerTextDocumentContentProvider(ACTORIUM_DOC_SCHEME, docContentProvider),
     // Owns a renewal timer and a SecretStorage listener now, so it has to be
     // torn down on reload rather than left firing against a dead instance.
@@ -641,8 +718,17 @@ export function activate(context: vscode.ExtensionContext): void {
       const folderPath = await resolveCurrentWorkspaceFolder();
       if (!folderPath) return;
       const bffUrl = authManager.getBffUrl();
-      const result = await connectAgentByTarget(target, folderPath, bffUrl);
-      if (!result.ok) vscode.window.showErrorMessage(`Actorium: ${result.message}`);
+      const result = await connectAgentByTarget(
+        target,
+        folderPath,
+        bffUrl,
+        authManager.getActiveAccountId() ?? undefined,
+      );
+      if (!result.ok) {
+        vscode.window.showErrorMessage(`Actorium: ${result.message}`);
+      } else {
+        await recordCurrentMcpRegistration(folderPath, target);
+      }
       return result;
     }),
     vscode.commands.registerCommand(
@@ -651,7 +737,11 @@ export function activate(context: vscode.ExtensionContext): void {
         const folderPath = await resolveCurrentWorkspaceFolder();
         if (!folderPath) return;
         const result = await disconnectAgentByTarget(target, folderPath);
-        if (!result.ok) vscode.window.showErrorMessage(`Actorium: ${result.message}`);
+        if (!result.ok) {
+          vscode.window.showErrorMessage(`Actorium: ${result.message}`);
+        } else {
+          await clearMcpRegistration(extContext, folderPath, target);
+        }
         return result;
       },
     ),
@@ -659,6 +749,7 @@ export function activate(context: vscode.ExtensionContext): void {
       const folderPath = await resolveCurrentWorkspaceFolder();
       if (!folderPath) return;
       openAgentCli(target, folderPath);
+      await recordAgentSessionOpened(extContext, folderPath, target);
     }),
   );
 

@@ -1,10 +1,20 @@
 import type { AccountSummary, MeUser, VersionEntry } from '@workflow-extension/shared';
+import * as path from 'path';
 import * as vscode from 'vscode';
 
+import {
+  checkoutBranch,
+  currentBranch,
+  listBranchesForPath,
+  pullRepository,
+  shortBranchName,
+} from '../git/gitApi.js';
 import { compareVersions, type VersionChecker } from '../version/checker.js';
 import { buildWebviewHtml } from '../webview-html.js';
 import { getWorkspaceFolder, removeWorkspaceFolder } from '../workspace/folderManager.js';
+import { checkoutHandoffPRs } from '../workspace/handoffCheckout.js';
 import {
+  type AgentStatus,
   type AgentTarget,
   DEFAULT_MCP_NPM_PACKAGE,
   getClaudeCodeStatus,
@@ -13,6 +23,7 @@ import {
   getOpencodeStatus,
   installMcpCli,
 } from '../workspace/mcpConnect.js';
+import { getAgentSessionOpenedAt, getMcpRegistration } from '../workspace/mcpRegistrationState.js';
 import {
   cloneAllRepos,
   cloneRepo,
@@ -58,6 +69,7 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
   private _sessionExpired = false;
   private _versionBlockedEntry: VersionEntry | null = null;
   private _pollInterval: NodeJS.Timeout | null = null;
+  private _mcpConfigUpdatedAt: number | null = null;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -68,6 +80,7 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
     private readonly regenerateAgentsFile: (folderPath: string) => Promise<void>,
     private readonly getFrontendUrl: () => string | null,
     private readonly checkSessionExpiry: () => void,
+    private readonly getEnvironmentLabel: () => string,
   ) {}
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -161,6 +174,10 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
           FeatureDetailPanel.createOrShow(this.context, this.codingApiCtx, message.feature);
           break;
 
+        case 'checkoutHandoffPRs':
+          await checkoutHandoffPRs(this.context, this.codingApiCtx, message.feature);
+          break;
+
         case 'openFeaturesBrowser':
           FeaturesBrowserPanel.createOrShow(this.context, this.codingApiCtx);
           break;
@@ -184,6 +201,14 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
 
         case 'unlinkRepo':
           await this._unlinkRepo(message.name);
+          break;
+
+        case 'pullRepo':
+          await this._pullRepo(message.name);
+          break;
+
+        case 'switchRepoBranch':
+          await this._switchRepoBranch(message.name);
           break;
 
         case 'cloneRepo':
@@ -274,18 +299,30 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
 
   private async _loadDocs(): Promise<void> {
     const workspaceId = this.codingApiCtx.getWorkspaceId();
-    const docs = workspaceId
-      ? await listDocuments(codingApiConfig(this.codingApiCtx), workspaceId)
-      : null;
-    this._postMessage({ command: 'docsLoaded', docs: docs ?? [] });
+    if (!workspaceId) {
+      this._postMessage({ command: 'docsLoaded', docs: [] });
+      return;
+    }
+    const result = await listDocuments(codingApiConfig(this.codingApiCtx), workspaceId);
+    this._postMessage(
+      result.ok
+        ? { command: 'docsLoaded', docs: result.data }
+        : { command: 'docsLoaded', docs: [], error: result.reason },
+    );
   }
 
   private async _loadFeatures(): Promise<void> {
     const workspaceId = this.codingApiCtx.getWorkspaceId();
-    const features = workspaceId
-      ? await listFeatures(codingApiConfig(this.codingApiCtx), workspaceId)
-      : null;
-    this._postMessage({ command: 'featuresLoaded', features: features ?? [] });
+    if (!workspaceId) {
+      this._postMessage({ command: 'featuresLoaded', features: [] });
+      return;
+    }
+    const result = await listFeatures(codingApiConfig(this.codingApiCtx), workspaceId);
+    this._postMessage(
+      result.ok
+        ? { command: 'featuresLoaded', features: result.data }
+        : { command: 'featuresLoaded', features: [], error: result.reason },
+    );
   }
 
   private async _loadRepos(): Promise<void> {
@@ -313,6 +350,7 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
       linkName?: string;
       isSymlink?: boolean;
       broken?: boolean;
+      currentBranch?: string;
     }[] = [];
 
     for (const wr of workspaceRepos ?? []) {
@@ -345,6 +383,18 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
       }
     }
 
+    // Resolved after the merge above (not inline in the loops) so both the
+    // workspace-known and locally-only branches of repos get it uniformly,
+    // and only once per repo. Skipped for anything with no usable local
+    // path (not linked, or a broken symlink) — nothing to ask git about.
+    await Promise.all(
+      repos.map(async (r) => {
+        if (r.target && !r.broken) {
+          r.currentBranch = await currentBranch(r.target);
+        }
+      }),
+    );
+
     this._postMessage({ command: 'reposLoaded', repos, hasWorkspaceFolder: !!folder });
   }
 
@@ -372,6 +422,68 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
     } else {
       await this.regenerateAgentsFile(folder);
     }
+    await this._loadRepos();
+  }
+
+  /** Pulls whatever branch is currently checked out for one linked repo —
+   * `name` is the LOCAL folder name (repo.linkName ?? repo.name from the
+   * webview, same convention as _unlinkRepo above), joined against the
+   * workspace folder directly since a repo row here is by definition already
+   * linked (symlink or real clone) at that path. */
+  private async _pullRepo(name: string): Promise<void> {
+    const workspaceId = this.getWorkspaceId();
+    const folder = workspaceId
+      ? getWorkspaceFolder(this.context, this.codingApiCtx.getBffUrl(), workspaceId)
+      : undefined;
+    if (!folder) return;
+
+    const repoPath = path.join(folder, name);
+    const result = await pullRepository(repoPath);
+    if (!result.ok) {
+      vscode.window.showErrorMessage(`Actorium: ${result.message}`);
+    }
+    this._postMessage({ command: 'pullRepoDone', name });
+    await this._loadRepos();
+  }
+
+  /** Shows a searchable QuickPick of every local/remote branch for one
+   * linked repo and checks out whichever one is picked — a QuickPick is the
+   * right fit here (VS Code's own branch switcher works the same way)
+   * unlike the feature row's small fixed action list (see
+   * feature-list.tsx's in-webview ContextMenu for that one instead). A
+   * remote branch is checked out by its short name (stripping the
+   * "origin/" prefix) so git creates a local tracking branch instead of a
+   * detached HEAD, matching `git checkout <shortname>`'s own default
+   * behavior. */
+  private async _switchRepoBranch(name: string): Promise<void> {
+    const workspaceId = this.getWorkspaceId();
+    const folder = workspaceId
+      ? getWorkspaceFolder(this.context, this.codingApiCtx.getBffUrl(), workspaceId)
+      : undefined;
+    if (!folder) return;
+
+    const repoPath = path.join(folder, name);
+    const { head, local, remote } = await listBranchesForPath(repoPath);
+    if (local.length === 0 && remote.length === 0) {
+      vscode.window.showWarningMessage(`Actorium: Couldn't read branches for "${name}".`);
+      return;
+    }
+
+    const items: vscode.QuickPickItem[] = [
+      ...local.map((branch) => ({
+        label: branch,
+        description: branch === head ? 'current' : undefined,
+      })),
+      ...remote.map((branch) => ({ label: branch, description: 'remote' })),
+    ];
+    const picked = await vscode.window.showQuickPick(items, {
+      placeHolder: `Switch branch for "${name}"`,
+    });
+    if (!picked || picked.label === head) return;
+
+    const target = picked.description === 'remote' ? shortBranchName(picked.label) : picked.label;
+    const result = await checkoutBranch(repoPath, target);
+    if (!result.ok) vscode.window.showErrorMessage(`Actorium: ${result.message}`);
     await this._loadRepos();
   }
 
@@ -544,7 +656,33 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
       getCodexStatus(folder),
       getOpencodeStatus(folder),
     ]);
-    const statuses: Record<AgentTarget, unknown> = { claude, codex, opencode };
+    const raw: Record<AgentTarget, AgentStatus> = { claude, codex, opencode };
+
+    const activeAccount = this._accounts.find((a) => a.isActive);
+    const activeAccountLabel = activeAccount
+      ? activeAccount.user.display_name || activeAccount.user.email
+      : null;
+
+    const statuses: Record<AgentTarget, AgentStatus> = { claude, codex, opencode };
+    for (const target of Object.keys(raw) as AgentTarget[]) {
+      const status = raw[target];
+      if (!status.registered) continue;
+      const rec = getMcpRegistration(this.context, folder, target);
+      const sessionOpenedAt = getAgentSessionOpenedAt(this.context, folder, target);
+      statuses[target] = {
+        ...status,
+        boundAccountLabel: rec?.accountLabel,
+        boundWorkspaceLabel: rec?.workspaceLabel,
+        stale:
+          !!rec &&
+          ((rec.accountLabel ?? null) !== activeAccountLabel ||
+            (rec.workspaceLabel ?? null) !== this._workspaceLabel),
+        needsRestart:
+          sessionOpenedAt !== undefined &&
+          this._mcpConfigUpdatedAt !== null &&
+          sessionOpenedAt < this._mcpConfigUpdatedAt,
+      };
+    }
     this._postMessage({ command: 'mcpStatusLoaded', statuses });
   }
 
@@ -668,7 +806,11 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
 
   /** Re-send extension-owned state on the webview's 'ready' handshake. */
   private _syncState(): void {
-    this._postMessage({ command: 'connectionChanged', connected: this._connected });
+    this._postMessage({
+      command: 'connectionChanged',
+      connected: this._connected,
+      environmentLabel: this.getEnvironmentLabel(),
+    });
     this._postMessage({ command: 'workspaceLabelChanged', label: this._workspaceLabel });
     this._postMessage({ command: 'userProfileChanged', profile: this._userProfile });
     this._postMessage({ command: 'accountsChanged', accounts: this._accounts });
@@ -680,7 +822,11 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
 
   setConnected(connected: boolean): void {
     this._connected = connected;
-    this._postMessage({ command: 'connectionChanged', connected });
+    this._postMessage({
+      command: 'connectionChanged',
+      connected,
+      environmentLabel: this.getEnvironmentLabel(),
+    });
   }
 
   setWorkspaceLabel(label: string | null): void {
@@ -714,6 +860,15 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
   setSessionExpired(expired: boolean): void {
     this._sessionExpired = expired;
     this._postMessage({ command: 'sessionExpiredChanged', expired });
+  }
+
+  /** Called after reconcileMcpForCurrentAccount rewrites one or more agents'
+   * on-disk MCP config (see extension.ts) — reloads MCP status immediately
+   * (rather than waiting for the webview to notice and ask) so the
+   * stale/needsRestart badges in agent-status-list.tsx update right away. */
+  setMcpConfigUpdatedAt(timestamp: number): void {
+    this._mcpConfigUpdatedAt = timestamp;
+    void this._loadMcpStatus();
   }
 
   /** Shows a persistent, non-dismissible block overlay when the extension

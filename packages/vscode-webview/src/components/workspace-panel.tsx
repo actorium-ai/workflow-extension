@@ -1,4 +1,13 @@
-import { AtSign, CloudDownload, FolderGit2, FolderX, Link2, Unlink } from 'lucide-react';
+import {
+  AtSign,
+  CloudDownload,
+  FolderGit2,
+  FolderX,
+  Link2,
+  Loader2,
+  RefreshCw,
+  Unlink,
+} from 'lucide-react';
 
 import type { LinkedRepo } from '../utils/types.ts';
 
@@ -17,6 +26,16 @@ interface WorkspacePanelProps {
   /** Removes a linked repo's symlink from the workspace folder (the real
    * clone it points to is untouched) — see repoLinker.ts's unlinkRepo. */
   onUnlinkRepo: (name: string) => void;
+  /** Pulls whatever branch is currently checked out for a linked repo — see
+   * the extension host's src/git/gitApi.ts pullRepository. */
+  onPullRepo: (name: string) => void;
+  /** Repos with a pull currently in flight (see use-navigator-controller.ts's
+   * pullingRepos) — drives the per-row spinner/disabled state. */
+  pullingRepos: Set<string>;
+  /** Shows a searchable QuickPick of every local/remote branch for this
+   * repo and checks out whichever is picked — see panel.ts's
+   * _switchRepoBranch. */
+  onSwitchBranch: (name: string) => void;
   /** Clones a not-yet-linked-but-known workspace repo directly from its
    * repo_url — see repoLinker.ts's cloneRepo. Only rendered when the repo
    * has a known URL (repo.repoUrl). */
@@ -48,6 +67,9 @@ export function WorkspacePanel({
   onOpenWorkspaceFolder,
   onAddRepo,
   onUnlinkRepo,
+  onPullRepo,
+  pullingRepos,
+  onSwitchBranch,
   onCloneRepo,
   onTagInPrompt,
 }: WorkspacePanelProps) {
@@ -78,11 +100,11 @@ export function WorkspacePanel({
           repo.linked && repo.broken ? (
             <div
               key={repo.name}
-              className="group flex w-full items-center gap-1.5 rounded-md pr-1 hover:bg-surface-secondary"
+              className="group flex w-full items-center gap-1 rounded-md pr-1 hover:bg-surface-secondary"
             >
               <span
                 title={`"${repo.linkName ?? repo.name}" was linked here, but the local folder it pointed to was deleted. Use the section's "Repair" action to clean this up.`}
-                className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5"
+                className="flex min-w-0 flex-1 items-center gap-1 px-2 py-1"
               >
                 <Unlink className="h-3.5 w-3.5 shrink-0 text-danger" aria-hidden="true" />
                 <span className="min-w-0 flex-1 truncate text-xs text-text-muted">{repo.name}</span>
@@ -91,7 +113,7 @@ export function WorkspacePanel({
           ) : repo.linked ? (
             <div
               key={repo.name}
-              className="group flex w-full items-center gap-1.5 rounded-md pr-1 hover:bg-surface-secondary"
+              className="group flex w-full items-center gap-1 rounded-md pr-1 hover:bg-surface-secondary"
             >
               <button
                 type="button"
@@ -99,16 +121,31 @@ export function WorkspacePanel({
                   repo.linkName ? `Linked as "${repo.linkName}" → ${repo.target}` : repo.target
                 }
                 onClick={onOpenWorkspaceFolder}
-                className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left"
+                className="flex min-w-0 shrink items-center gap-1 px-2 py-1 text-left"
               >
                 <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-success" aria-hidden="true" />
-                <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
+                <span className="min-w-0 truncate text-xs text-text-secondary">
                   {repo.name}
                   {repo.linkName && (
                     <span className="ml-1 text-text-muted">(linked as {repo.linkName})</span>
                   )}
                 </span>
               </button>
+              {repo.currentBranch && (
+                <button
+                  type="button"
+                  title={`Switch branch for "${repo.linkName ?? repo.name}" (currently ${repo.currentBranch})`}
+                  onClick={() => onSwitchBranch(repo.linkName ?? repo.name)}
+                  className="ml-1 max-w-24 shrink-0 truncate rounded bg-surface-secondary px-1 py-px text-[10px] text-text-muted hover:text-text-primary"
+                >
+                  {repo.currentBranch}
+                </button>
+              )}
+              {/* Pushes the action icons to the row's right edge, restoring
+                  the same right-aligned/hover-revealed layout the name
+                  button's own flex-1 used to give them before the branch
+                  badge sat between them. */}
+              <div className="min-w-0 flex-1" />
               <button
                 type="button"
                 title="Tag this repo in the terminal prompt"
@@ -116,6 +153,19 @@ export function WorkspacePanel({
                 className="shrink-0 rounded p-1 text-text-muted opacity-0 hover:bg-surface-secondary hover:text-text-primary group-hover:opacity-100"
               >
                 <AtSign className="h-3 w-3 shrink-0" aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                disabled={pullingRepos.has(repo.linkName ?? repo.name)}
+                title={`Pull latest for "${repo.linkName ?? repo.name}"`}
+                onClick={() => onPullRepo(repo.linkName ?? repo.name)}
+                className="shrink-0 rounded p-1 text-text-muted opacity-0 hover:bg-surface-secondary hover:text-text-primary group-hover:opacity-100 disabled:pointer-events-none disabled:opacity-100"
+              >
+                {pullingRepos.has(repo.linkName ?? repo.name) ? (
+                  <Loader2 className="h-3 w-3 shrink-0 animate-spin" aria-hidden="true" />
+                ) : (
+                  <RefreshCw className="h-3 w-3 shrink-0" aria-hidden="true" />
+                )}
               </button>
               {repo.isSymlink && (
                 <button
@@ -131,11 +181,11 @@ export function WorkspacePanel({
           ) : (
             <div
               key={repo.name}
-              className="group flex w-full items-center gap-1.5 rounded-md pr-1 hover:bg-surface-secondary"
+              className="group flex w-full items-center gap-1 rounded-md pr-1 hover:bg-surface-secondary"
             >
               <span
                 title="Not linked locally yet"
-                className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5"
+                className="flex min-w-0 flex-1 items-center gap-1 px-2 py-1"
               >
                 <FolderX className="h-3.5 w-3.5 shrink-0 text-warning" aria-hidden="true" />
                 <span className="min-w-0 flex-1 truncate text-xs text-text-muted">{repo.name}</span>

@@ -5,6 +5,8 @@ import * as os from 'os';
 import * as path from 'path';
 import { promisify } from 'util';
 
+import { accountKeyFor } from '../auth/credentialFile.js';
+
 const execFile = promisify(execFileCb);
 
 /**
@@ -36,6 +38,22 @@ export interface AgentStatus {
    * not whether it currently works (Codex, opencode). */
   connected?: boolean;
   detail?: string;
+  /** Which account/workspace this registration was last written for (see
+   * mcpRegistrationState.ts) — undefined for a registration made before that
+   * tracking existed. Filled in by panel.ts's _loadMcpStatus, not by the
+   * getXStatus functions in this file (they only know about the CLI/config
+   * itself, not which account wrote it). */
+  boundAccountLabel?: string;
+  boundWorkspaceLabel?: string;
+  /** True when boundAccountLabel/boundWorkspaceLabel no longer match the
+   * CURRENTLY active account/workspace — this registration needs a
+   * Reconnect to point at the right place. */
+  stale?: boolean;
+  /** True when the on-disk config was rewritten (reconcileRegisteredAgents)
+   * after this agent's CLI session was last opened via "Open in terminal" —
+   * a best-effort hint, since VS Code can't observe whether that terminal's
+   * process is still alive. */
+  needsRestart?: boolean;
 }
 
 const MCP_SERVER_NAME = 'actorium-mcp';
@@ -48,6 +66,16 @@ export const DEFAULT_MCP_NPM_PACKAGE = '@actorium-ai/actorium-mcp';
 
 function envArg(bffUrl: string): string {
   return `API_URL=${bffUrl}`;
+}
+
+/** `ACTORIUM_ACCOUNT_KEY` env entries for a registration, when an account is
+ * known — hashed via accountKeyFor (never the raw account id, see its doc
+ * comment) so workflow-mcp can select the matching per-account credential
+ * file instead of always falling back to the legacy bffUrl-only one. Empty
+ * when accountId is omitted — an old caller/CLI without account context
+ * keeps registering exactly as before. */
+function accountEnvArgs(accountId?: string): string[] {
+  return accountId ? [`ACTORIUM_ACCOUNT_KEY=${accountKeyFor(accountId)}`] : [];
 }
 
 /** pnpm's own default global dir per OS (used when PNPM_HOME isn't set in
@@ -144,18 +172,16 @@ export async function installMcpCli(npmPackage: string): Promise<McpConnectResul
  * writes it under `cwd`'s project entry, so `cwd` should be the workspace
  * folder the agent will actually be opened in.
  */
-export async function connectClaudeCode(cwd: string, bffUrl: string): Promise<McpConnectResult> {
-  const args = [
-    'mcp',
-    'add',
-    MCP_SERVER_NAME,
-    '--scope',
-    'local',
-    '--env',
-    envArg(bffUrl),
-    '--',
-    MCP_BIN,
-  ];
+export async function connectClaudeCode(
+  cwd: string,
+  bffUrl: string,
+  accountId?: string,
+): Promise<McpConnectResult> {
+  const args = ['mcp', 'add', MCP_SERVER_NAME, '--scope', 'local'];
+  for (const kv of [envArg(bffUrl), ...accountEnvArgs(accountId)]) {
+    args.push('--env', kv);
+  }
+  args.push('--', MCP_BIN);
   try {
     await runCli('claude', args, { cwd });
     return { ok: true, message: `Registered "${MCP_SERVER_NAME}" with Claude Code (local scope).` };
@@ -205,8 +231,16 @@ export async function getClaudeCodeStatus(cwd: string): Promise<AgentStatus> {
  * Same idea for Codex — it has its own `codex mcp add` CLI mirroring Claude
  * Code's, so this shells out rather than hand-writing ~/.codex/config.toml.
  */
-export async function connectCodex(cwd: string, bffUrl: string): Promise<McpConnectResult> {
-  const args = ['mcp', 'add', MCP_SERVER_NAME, '--env', envArg(bffUrl), '--', MCP_BIN];
+export async function connectCodex(
+  cwd: string,
+  bffUrl: string,
+  accountId?: string,
+): Promise<McpConnectResult> {
+  const args = ['mcp', 'add', MCP_SERVER_NAME];
+  for (const kv of [envArg(bffUrl), ...accountEnvArgs(accountId)]) {
+    args.push('--env', kv);
+  }
+  args.push('--', MCP_BIN);
   try {
     await runCli('codex', args, { cwd });
     return { ok: true, message: `Registered "${MCP_SERVER_NAME}" with Codex.` };
@@ -258,6 +292,7 @@ export async function getCodexStatus(cwd: string): Promise<AgentStatus> {
 export async function connectOpencode(
   workspaceFolderPath: string,
   bffUrl: string,
+  accountId?: string,
 ): Promise<McpConnectResult> {
   const filePath = opencodeConfigPath(workspaceFolderPath);
   const parsed = await readOpencodeConfig(filePath);
@@ -269,7 +304,10 @@ export async function connectOpencode(
   mcp[MCP_SERVER_NAME] = {
     type: 'local',
     command: [MCP_BIN],
-    environment: { API_URL: bffUrl },
+    environment: {
+      API_URL: bffUrl,
+      ...(accountId ? { ACTORIUM_ACCOUNT_KEY: accountKeyFor(accountId) } : {}),
+    },
     enabled: true,
   };
   config.mcp = mcp;
@@ -343,12 +381,63 @@ async function readOpencodeConfig(
  * import — everything else here is plain Node/filesystem logic, testable
  * outside the extension host.
  */
-export function genericMcpConfigSnippet(bffUrl: string): string {
+// ── Reconciling already-registered agents after a switch ────────────────────
+
+/**
+ * Re-registers actorium-mcp with every agent ALREADY registered for
+ * `folderPath`, using the CURRENT bffUrl/accountId — keeps the on-disk MCP
+ * config in sync with whichever account/backend this folder is now pointed
+ * at, after an account/workspace/environment switch. Agents that aren't
+ * registered here are left alone (registering one from scratch is a
+ * deliberate user action via the Navigator's per-agent "Connect" button, not
+ * something a switch should do on its own).
+ *
+ * This does NOT restart an already-running claude/codex/opencode session —
+ * each of those CLIs only reads its MCP config when IT starts a session and
+ * spawns the actorium-mcp child process; there's no supported way to hot-
+ * patch an already-running session's MCP server env. A live session keeps
+ * working unaffected by a SAME-account token renewal (see workflow-mcp's
+ * BffClient, which re-reads its credential file per call), but genuinely
+ * switching account/backend does need that session restarted to pick up —
+ * callers should tell the user so (see extension.ts's
+ * reconcileMcpForCurrentAccount).
+ */
+export async function reconcileRegisteredAgents(
+  folderPath: string,
+  bffUrl: string,
+  accountId: string | undefined,
+): Promise<AgentTarget[]> {
+  const [claude, codex, opencode] = await Promise.all([
+    getClaudeCodeStatus(folderPath),
+    getCodexStatus(folderPath),
+    getOpencodeStatus(folderPath),
+  ]);
+
+  const reconciled: AgentTarget[] = [];
+  if (claude.registered) {
+    await connectClaudeCode(folderPath, bffUrl, accountId);
+    reconciled.push('claude');
+  }
+  if (codex.registered) {
+    await connectCodex(folderPath, bffUrl, accountId);
+    reconciled.push('codex');
+  }
+  if (opencode.registered) {
+    await connectOpencode(folderPath, bffUrl, accountId);
+    reconciled.push('opencode');
+  }
+  return reconciled;
+}
+
+export function genericMcpConfigSnippet(bffUrl: string, accountId?: string): string {
   const snippet = {
     mcpServers: {
       [MCP_SERVER_NAME]: {
         command: MCP_BIN,
-        env: { API_URL: bffUrl },
+        env: {
+          API_URL: bffUrl,
+          ...(accountId ? { ACTORIUM_ACCOUNT_KEY: accountKeyFor(accountId) } : {}),
+        },
       },
     },
   };

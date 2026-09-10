@@ -97,6 +97,11 @@ export interface AccountSummary {
   user: MeUser;
   workspaceLabel: string | null;
   isActive: boolean;
+  /** True when this account's access token is past its known expiry. For the
+   * active account this reflects live renewal state; for any other account
+   * it's a clock-only check against its last-known expiresAt, since only the
+   * active account is proactively renewed (see AuthManager.listAccounts). */
+  sessionExpired: boolean;
 }
 
 export interface WorkspaceSummary {

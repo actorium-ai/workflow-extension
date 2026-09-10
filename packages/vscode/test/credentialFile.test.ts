@@ -12,7 +12,12 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } 
 import { tmpdir } from 'os';
 import { join } from 'path';
 
-import { deleteCredentialFile, writeCredentialFile } from '../src/auth/credentialFile.js';
+import {
+  accountKeyFor,
+  deleteAccountCredentialFile,
+  deleteCredentialFile,
+  writeCredentialFile,
+} from '../src/auth/credentialFile.js';
 
 const realHome = process.env.HOME;
 const tempHome = mkdtempSync(join(tmpdir(), 'actorium-credfile-test-'));
@@ -25,6 +30,11 @@ const actoriumDir = join(tempHome, '.actorium');
 function credentialPathFor(bffUrl: string): string {
   const key = createHash('sha256').update(bffUrl).digest('hex').slice(0, 16);
   return join(actoriumDir, `auth.${key}.json`);
+}
+
+function accountCredentialPathFor(bffUrl: string, accountId: string): string {
+  const key = createHash('sha256').update(bffUrl).digest('hex').slice(0, 16);
+  return join(actoriumDir, `auth.${key}.${accountKeyFor(accountId)}.json`);
 }
 
 const PROD_URL = 'https://api.actorium.ai';
@@ -136,6 +146,69 @@ async function run(): Promise<void> {
     // No leftover .tmp files from the atomic-write dance.
     const leftovers = readdirSync(actoriumDir).filter((f) => f.endsWith('.tmp'));
     deepStrictEqual(leftovers, []);
+  }
+
+  // Passing accountId writes an ADDITIONAL account-scoped file alongside the
+  // legacy one — the legacy file still gets the same content (so a
+  // registration with no ACTORIUM_ACCOUNT_KEY env var keeps working
+  // unmodified), and the account file carries the same payload plus identity.
+  {
+    const accountId = 'acct-1|user@example.com';
+    const accountPath = accountCredentialPathFor(PROD_URL, accountId);
+
+    await writeCredentialFile({
+      accessToken: 'jwt-acct-1',
+      bffUrl: PROD_URL,
+      updatedAt: 999,
+      accountId,
+      accountEmail: 'user@example.com',
+      accountDisplayName: 'User One',
+    });
+
+    ok(existsSync(accountPath), 'account-scoped credential file should exist after write');
+    const accountParsed = JSON.parse(readFileSync(accountPath, 'utf8'));
+    deepStrictEqual(accountParsed.accessToken, 'jwt-acct-1');
+    deepStrictEqual(accountParsed.accountEmail, 'user@example.com');
+    deepStrictEqual(accountParsed.accountDisplayName, 'User One');
+
+    const legacyParsed = JSON.parse(readFileSync(prodPath, 'utf8'));
+    deepStrictEqual(legacyParsed.accessToken, 'jwt-acct-1');
+
+    // A second account on the SAME backend gets its own file, not clobbering
+    // the first account's.
+    const otherAccountId = 'acct-2|other@example.com';
+    const otherAccountPath = accountCredentialPathFor(PROD_URL, otherAccountId);
+    await writeCredentialFile({
+      accessToken: 'jwt-acct-2',
+      bffUrl: PROD_URL,
+      updatedAt: 1000,
+      accountId: otherAccountId,
+    });
+
+    ok(existsSync(accountPath), 'first account file should survive a second account writing');
+    deepStrictEqual(JSON.parse(readFileSync(accountPath, 'utf8')).accessToken, 'jwt-acct-1');
+    deepStrictEqual(JSON.parse(readFileSync(otherAccountPath, 'utf8')).accessToken, 'jwt-acct-2');
+
+    // Deleting one account's file leaves the other account's and the legacy
+    // file untouched.
+    await deleteAccountCredentialFile(PROD_URL, accountId);
+    ok(!existsSync(accountPath), 'deleted account file should be gone');
+    ok(existsSync(otherAccountPath), 'other account file should survive');
+    ok(existsSync(prodPath), 'legacy file should survive');
+
+    await deleteAccountCredentialFile(PROD_URL, otherAccountId);
+    await deleteCredentialFile(PROD_URL);
+  }
+
+  // Omitting accountId writes only the legacy file, exactly as before
+  // (back-compat — no stray account-scoped file appears).
+  {
+    await writeCredentialFile({ accessToken: 'jwt-no-account', bffUrl: PROD_URL, updatedAt: 1 });
+    const leftoverAccountFiles = readdirSync(actoriumDir).filter(
+      (f) => f.startsWith('auth.') && f.split('.').length > 3,
+    );
+    deepStrictEqual(leftoverAccountFiles, []);
+    await deleteCredentialFile(PROD_URL);
   }
 
   console.log('✅ Credential file tests passed');

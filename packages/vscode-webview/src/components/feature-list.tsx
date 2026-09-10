@@ -1,8 +1,9 @@
-import { AtSign, ChevronDown, ChevronRight, Search } from 'lucide-react';
+import { AtSign, ChevronDown, ChevronRight, GitPullRequestArrow, Search } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { lifecycleMeta, statusSortIndex, tint } from '../utils/feature-meta.ts';
 import type { FeatureSummary } from '../utils/types.ts';
+import { SectionState } from './section-state.tsx';
 import { LifecycleGlyph } from './status-glyph.tsx';
 
 function matchesQuery(feature: FeatureSummary, query: string): boolean {
@@ -17,6 +18,9 @@ function matchesQuery(feature: FeatureSummary, query: string): boolean {
 
 interface FeatureListProps {
   features: FeatureSummary[];
+  loading?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
   /** Opens the feature-detail editor tab (Product Spec/Tech Design/Tasks/
    * Handoff/Activity) — see NavigatorPanelProvider's openFeatureDetail
    * handler and FeatureDetailPanel. */
@@ -27,6 +31,11 @@ interface FeatureListProps {
    * mid-typing a prompt to; it isn't a structured mention, just a hint the
    * agent can resolve with its own MCP tools (get_feature by name, etc). */
   onTagInPrompt: (text: string) => void;
+  /** Fetches and checks out each repo's PR branch for review — see
+   * handoffCheckout.ts (the extension host confirms, naming every repo/PR,
+   * before touching anything). Only shown once a feature has reached
+   * Handoff (that's when it has PRs at all — see FeatureHandoff/HandoffPR). */
+  onCheckoutHandoffPRs: (feature: FeatureSummary) => void;
 }
 
 function featureTag(feature: FeatureSummary): string {
@@ -37,10 +46,12 @@ function FeatureRow({
   feature,
   onOpenFeatureDetail,
   onTagInPrompt,
+  onCheckoutHandoffPRs,
 }: {
   feature: FeatureSummary;
   onOpenFeatureDetail: (feature: FeatureSummary) => void;
   onTagInPrompt: (text: string) => void;
+  onCheckoutHandoffPRs: (feature: FeatureSummary) => void;
 }) {
   return (
     <div className="group flex w-full items-center gap-1 rounded-md pr-1 hover:bg-surface-secondary">
@@ -55,6 +66,16 @@ function FeatureRow({
           {feature.feature_name || feature.title || feature.id}
         </span>
       </button>
+      {feature.status === 'in_handoff' && (
+        <button
+          type="button"
+          title="Checkout PR for review"
+          onClick={() => onCheckoutHandoffPRs(feature)}
+          className="shrink-0 rounded p-1 text-text-muted opacity-0 hover:bg-surface-secondary hover:text-text-primary group-hover:opacity-100"
+        >
+          <GitPullRequestArrow className="h-3 w-3 shrink-0" aria-hidden="true" />
+        </button>
+      )}
       <button
         type="button"
         title="Tag this feature in the terminal prompt"
@@ -72,11 +93,13 @@ function FeatureGroup({
   features,
   onOpenFeatureDetail,
   onTagInPrompt,
+  onCheckoutHandoffPRs,
 }: {
   status: string;
   features: FeatureSummary[];
   onOpenFeatureDetail: (feature: FeatureSummary) => void;
   onTagInPrompt: (text: string) => void;
+  onCheckoutHandoffPRs: (feature: FeatureSummary) => void;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const meta = lifecycleMeta(status);
@@ -110,13 +133,22 @@ function FeatureGroup({
             feature={f}
             onOpenFeatureDetail={onOpenFeatureDetail}
             onTagInPrompt={onTagInPrompt}
+            onCheckoutHandoffPRs={onCheckoutHandoffPRs}
           />
         ))}
     </div>
   );
 }
 
-export function FeatureList({ features, onOpenFeatureDetail, onTagInPrompt }: FeatureListProps) {
+export function FeatureList({
+  features,
+  loading,
+  error,
+  onRetry,
+  onOpenFeatureDetail,
+  onTagInPrompt,
+  onCheckoutHandoffPRs,
+}: FeatureListProps) {
   const [query, setQuery] = useState('');
 
   const filtered = useMemo(() => features.filter((f) => matchesQuery(f, query)), [features, query]);
@@ -132,7 +164,13 @@ export function FeatureList({ features, onOpenFeatureDetail, onTagInPrompt }: Fe
   }, [filtered]);
 
   if (features.length === 0) {
-    return <div className="px-3 py-3 text-center text-xs text-text-muted">No features yet.</div>;
+    if (error) {
+      return <SectionState kind="error" message="Couldn't load features." onRetry={onRetry} />;
+    }
+    if (loading) {
+      return <SectionState kind="loading" message="Loading features…" />;
+    }
+    return <SectionState kind="empty" message="No features yet." />;
   }
 
   return (
@@ -157,6 +195,7 @@ export function FeatureList({ features, onOpenFeatureDetail, onTagInPrompt }: Fe
             features={groupFeatures}
             onOpenFeatureDetail={onOpenFeatureDetail}
             onTagInPrompt={onTagInPrompt}
+            onCheckoutHandoffPRs={onCheckoutHandoffPRs}
           />
         ))
       )}

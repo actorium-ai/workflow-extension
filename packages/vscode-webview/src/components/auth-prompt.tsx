@@ -5,6 +5,14 @@ import { ActoriumLogo } from './actorium-logo';
 interface AuthPromptProps {
   visible: boolean;
   onConnect: () => void;
+  /** Which backend this window is currently scoped to (e.g. "staging", or a
+   * raw custom bffUrl) — named in the copy so landing here after picking a
+   * custom/non-Production server (via "Select custom server…" or the
+   * advanced actorium.bffUrl override) reads as "you're on the right
+   * backend, you just have no account here yet" rather than generic,
+   * backend-agnostic copy. Omitted (or "Production") shows the original
+   * copy unchanged, keeping the common case exactly as it was. */
+  environmentLabel?: string | null;
 }
 
 const HIGHLIGHTS = [
@@ -13,7 +21,8 @@ const HIGHLIGHTS = [
   { icon: GitPullRequest, label: 'Open branches, commit, and post PRs' },
 ];
 
-export function AuthPrompt({ visible, onConnect }: AuthPromptProps) {
+export function AuthPrompt({ visible, onConnect, environmentLabel }: AuthPromptProps) {
+  const showEnvironment = !!environmentLabel && environmentLabel !== 'Production';
   return (
     <div
       className={
@@ -32,7 +41,9 @@ export function AuthPrompt({ visible, onConnect }: AuthPromptProps) {
       <div className="space-y-1.5">
         <h3 className="text-base font-semibold text-text-primary">Actorium Agent</h3>
         <p className="max-w-[260px] text-sm text-text-secondary">
-          Connect your account to start pair programming with AI, right inside your editor.
+          {showEnvironment
+            ? `Connect your ${environmentLabel} account to start pair programming with AI, right inside your editor.`
+            : 'Connect your account to start pair programming with AI, right inside your editor.'}
         </p>
       </div>
       <button

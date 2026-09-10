@@ -1,6 +1,6 @@
 import type { FeatureSummary } from './types.ts';
 
-export type PanelKind = 'navigator' | 'feature-detail' | 'features-browser';
+export type PanelKind = 'navigator' | 'feature-detail' | 'features-browser' | 'git';
 
 export interface FeatureDetailInitialData {
   panelKind: 'feature-detail';
@@ -11,7 +11,12 @@ export interface FeaturesBrowserInitialData {
   panelKind: 'features-browser';
 }
 
-type InitialData = FeatureDetailInitialData | FeaturesBrowserInitialData | null;
+export interface GitPanelInitialData {
+  panelKind: 'git';
+}
+
+type InitialData =
+  FeatureDetailInitialData | FeaturesBrowserInitialData | GitPanelInitialData | null;
 
 declare global {
   interface Window {
