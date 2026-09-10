@@ -86,11 +86,21 @@ export async function pullRepository(folderPath: string): Promise<RepoOpResult> 
 
 /** The name of whichever branch is currently checked out in `folderPath`,
  * or undefined for a detached HEAD / an unreadable repo. Same
- * API-first-then-CLI-fallback strategy as pullRepository above. */
+ * API-first-then-CLI-fallback strategy as pullRepository above.
+ *
+ * Calls `repo.status()` before reading `state.HEAD` — the Git extension's
+ * cached state only updates on its own FS-watcher debounce, so right after
+ * something outside VS Code's UI changes HEAD (our own `execFile('git',
+ * ['checkout', ...])` calls included — see handoffCheckout.ts/gitPanel.ts),
+ * a caller reading `state.HEAD` immediately afterward can otherwise still see
+ * the branch that was checked out *before* that change. */
 export async function currentBranch(folderPath: string): Promise<string | undefined> {
   const api = getGitApi();
   const repo = api ? findRepository(api, folderPath) : undefined;
-  if (repo) return repo.state.HEAD?.name;
+  if (repo) {
+    await repo.status();
+    return repo.state.HEAD?.name;
+  }
 
   try {
     const { stdout } = await execFile('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {

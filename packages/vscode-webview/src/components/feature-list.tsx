@@ -1,4 +1,11 @@
-import { AtSign, ChevronDown, ChevronRight, GitPullRequestArrow, Search } from 'lucide-react';
+import {
+  AtSign,
+  ChevronDown,
+  ChevronRight,
+  GitPullRequestArrow,
+  Loader2,
+  Search,
+} from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { lifecycleMeta, statusSortIndex, tint } from '../utils/feature-meta.ts';
@@ -36,6 +43,10 @@ interface FeatureListProps {
    * before touching anything). Only shown once a feature has reached
    * Handoff (that's when it has PRs at all — see FeatureHandoff/HandoffPR). */
   onCheckoutHandoffPRs: (feature: FeatureSummary) => void;
+  /** Feature ids with a "Checkout PR for review" in flight — see
+   * use-navigator-controller.ts's checkingOutFeatures, cleared on the
+   * extension host's checkoutHandoffPRsDone reply. */
+  checkingOutFeatures: Set<string>;
 }
 
 function featureTag(feature: FeatureSummary): string {
@@ -47,12 +58,15 @@ function FeatureRow({
   onOpenFeatureDetail,
   onTagInPrompt,
   onCheckoutHandoffPRs,
+  checkingOutFeatures,
 }: {
   feature: FeatureSummary;
   onOpenFeatureDetail: (feature: FeatureSummary) => void;
   onTagInPrompt: (text: string) => void;
   onCheckoutHandoffPRs: (feature: FeatureSummary) => void;
+  checkingOutFeatures: Set<string>;
 }) {
+  const checkingOut = checkingOutFeatures.has(feature.id);
   return (
     <div className="group flex w-full items-center gap-1 rounded-md pr-1 hover:bg-surface-secondary">
       <button
@@ -70,10 +84,15 @@ function FeatureRow({
         <button
           type="button"
           title="Checkout PR for review"
+          disabled={checkingOut}
           onClick={() => onCheckoutHandoffPRs(feature)}
-          className="shrink-0 rounded p-1 text-text-muted opacity-0 hover:bg-surface-secondary hover:text-text-primary group-hover:opacity-100"
+          className={`shrink-0 rounded p-1 text-text-muted hover:bg-surface-secondary hover:text-text-primary disabled:pointer-events-none ${checkingOut ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
         >
-          <GitPullRequestArrow className="h-3 w-3 shrink-0" aria-hidden="true" />
+          {checkingOut ? (
+            <Loader2 className="h-3 w-3 shrink-0 animate-spin" aria-hidden="true" />
+          ) : (
+            <GitPullRequestArrow className="h-3 w-3 shrink-0" aria-hidden="true" />
+          )}
         </button>
       )}
       <button
@@ -94,12 +113,14 @@ function FeatureGroup({
   onOpenFeatureDetail,
   onTagInPrompt,
   onCheckoutHandoffPRs,
+  checkingOutFeatures,
 }: {
   status: string;
   features: FeatureSummary[];
   onOpenFeatureDetail: (feature: FeatureSummary) => void;
   onTagInPrompt: (text: string) => void;
   onCheckoutHandoffPRs: (feature: FeatureSummary) => void;
+  checkingOutFeatures: Set<string>;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const meta = lifecycleMeta(status);
@@ -134,6 +155,7 @@ function FeatureGroup({
             onOpenFeatureDetail={onOpenFeatureDetail}
             onTagInPrompt={onTagInPrompt}
             onCheckoutHandoffPRs={onCheckoutHandoffPRs}
+            checkingOutFeatures={checkingOutFeatures}
           />
         ))}
     </div>
@@ -148,6 +170,7 @@ export function FeatureList({
   onOpenFeatureDetail,
   onTagInPrompt,
   onCheckoutHandoffPRs,
+  checkingOutFeatures,
 }: FeatureListProps) {
   const [query, setQuery] = useState('');
 
@@ -196,6 +219,7 @@ export function FeatureList({
             onOpenFeatureDetail={onOpenFeatureDetail}
             onTagInPrompt={onTagInPrompt}
             onCheckoutHandoffPRs={onCheckoutHandoffPRs}
+            checkingOutFeatures={checkingOutFeatures}
           />
         ))
       )}

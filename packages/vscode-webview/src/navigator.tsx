@@ -89,6 +89,10 @@ export function Navigator() {
                   <WorkspaceMenu
                     onCloneAllRepos={c.cloneAllRepos}
                     cloningAll={c.cloningAll}
+                    onPullAllRepos={c.pullAllRepos}
+                    pullingAll={c.pullingAll}
+                    onCheckoutDefaultBranches={c.checkoutDefaultBranches}
+                    checkingOutDefaultBranches={c.checkingOutDefaultBranches}
                     onRepair={c.repairWorkspace}
                     repairing={c.repairing}
                     onUnlinkWorkspace={c.unlinkWorkspaceFolder}
@@ -174,6 +178,7 @@ export function Navigator() {
               onOpenFeatureDetail={c.openFeatureDetail}
               onTagInPrompt={c.tagInPrompt}
               onCheckoutHandoffPRs={c.checkoutHandoffPRs}
+              checkingOutFeatures={c.checkingOutFeatures}
             />
           </CollapsibleSection>
 

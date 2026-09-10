@@ -50,8 +50,11 @@ export function useNavigatorController() {
   const [mcpCliStatus, setMcpCliStatus] = useState<McpCliStatus | null>(null);
   const [mcpCliInstalling, setMcpCliInstalling] = useState(false);
   const [cloningAll, setCloningAll] = useState(false);
+  const [pullingAll, setPullingAll] = useState(false);
+  const [checkingOutDefaultBranches, setCheckingOutDefaultBranches] = useState(false);
   const [repairing, setRepairing] = useState(false);
   const [pullingRepos, setPullingRepos] = useState<Set<string>>(new Set());
+  const [checkingOutFeatures, setCheckingOutFeatures] = useState<Set<string>>(new Set());
   const [technicalSkillsStatuses, setTechnicalSkillsStatuses] = useState<TechnicalSkillsStatuses>(
     {},
   );
@@ -113,6 +116,14 @@ export function useNavigatorController() {
     setCloningAll(true);
     vscode.postMessage({ command: 'cloneAllRepos' });
   }, []);
+  const pullAllRepos = useCallback(() => {
+    setPullingAll(true);
+    vscode.postMessage({ command: 'pullAllRepos' });
+  }, []);
+  const checkoutDefaultBranches = useCallback(() => {
+    setCheckingOutDefaultBranches(true);
+    vscode.postMessage({ command: 'checkoutDefaultBranches' });
+  }, []);
   const repairWorkspace = useCallback(() => {
     setRepairing(true);
     vscode.postMessage({ command: 'repairWorkspace' });
@@ -168,10 +179,10 @@ export function useNavigatorController() {
     (feature: FeatureSummary) => vscode.postMessage({ command: 'openFeatureDetail', feature }),
     [],
   );
-  const checkoutHandoffPRs = useCallback(
-    (feature: FeatureSummary) => vscode.postMessage({ command: 'checkoutHandoffPRs', feature }),
-    [],
-  );
+  const checkoutHandoffPRs = useCallback((feature: FeatureSummary) => {
+    setCheckingOutFeatures((prev) => new Set(prev).add(feature.id));
+    vscode.postMessage({ command: 'checkoutHandoffPRs', feature });
+  }, []);
   const openFeaturesBrowser = useCallback(
     () => vscode.postMessage({ command: 'openFeaturesBrowser' }),
     [],
@@ -233,10 +244,23 @@ export function useNavigatorController() {
         case 'cloneAllReposDone':
           setCloningAll(false);
           break;
+        case 'pullAllReposDone':
+          setPullingAll(false);
+          break;
+        case 'checkoutDefaultBranchesDone':
+          setCheckingOutDefaultBranches(false);
+          break;
         case 'pullRepoDone':
           setPullingRepos((prev) => {
             const next = new Set(prev);
             next.delete(msg.name);
+            return next;
+          });
+          break;
+        case 'checkoutHandoffPRsDone':
+          setCheckingOutFeatures((prev) => {
+            const next = new Set(prev);
+            next.delete(msg.featureId);
             return next;
           });
           break;
@@ -351,6 +375,7 @@ export function useNavigatorController() {
     openDocument,
     openFeatureDetail,
     checkoutHandoffPRs,
+    checkingOutFeatures,
     openFeaturesBrowser,
     tagInPrompt,
     versionBlocked,
@@ -365,6 +390,10 @@ export function useNavigatorController() {
     cloneRepo,
     cloneAllRepos,
     cloningAll,
+    pullAllRepos,
+    pullingAll,
+    checkoutDefaultBranches,
+    checkingOutDefaultBranches,
     repairWorkspace,
     repairing,
     unlinkWorkspaceFolder,

@@ -4,6 +4,7 @@ import {
   GitPullRequestArrow,
   LayoutGrid,
   List,
+  Loader2,
   Search,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
@@ -187,13 +188,16 @@ function FeatureListRow({
   tasks,
   onOpen,
   onCheckoutHandoffPRs,
+  checkingOutFeatures,
 }: {
   feature: FeatureSummary;
   tasks: TaskSummary[];
   onOpen: (feature: FeatureSummary) => void;
   onCheckoutHandoffPRs: (feature: FeatureSummary) => void;
+  checkingOutFeatures: Set<string>;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const checkingOut = checkingOutFeatures.has(feature.id);
   const meta = lifecycleMeta(feature.status);
   return (
     <div className="group border-b border-border last:border-b-0">
@@ -225,10 +229,15 @@ function FeatureListRow({
           <button
             type="button"
             title="Checkout PR for review"
+            disabled={checkingOut}
             onClick={() => onCheckoutHandoffPRs(feature)}
-            className="shrink-0 rounded p-1 text-text-muted opacity-0 hover:bg-surface-secondary hover:text-text-primary group-hover:opacity-100"
+            className={`shrink-0 rounded p-1 text-text-muted hover:bg-surface-secondary hover:text-text-primary disabled:pointer-events-none ${checkingOut ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
           >
-            <GitPullRequestArrow className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            {checkingOut ? (
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden="true" />
+            ) : (
+              <GitPullRequestArrow className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            )}
           </button>
         )}
         <span
@@ -258,12 +267,14 @@ function FeatureStatusSection({
   tasksByFeatureId,
   onOpen,
   onCheckoutHandoffPRs,
+  checkingOutFeatures,
 }: {
   status: string;
   features: FeatureSummary[];
   tasksByFeatureId: Map<string, TaskSummary[]>;
   onOpen: (feature: FeatureSummary) => void;
   onCheckoutHandoffPRs: (feature: FeatureSummary) => void;
+  checkingOutFeatures: Set<string>;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const meta = lifecycleMeta(status);
@@ -301,6 +312,7 @@ function FeatureStatusSection({
               tasks={tasksByFeatureId.get(f.id) ?? []}
               onOpen={onOpen}
               onCheckoutHandoffPRs={onCheckoutHandoffPRs}
+              checkingOutFeatures={checkingOutFeatures}
             />
           ))
         ))}
@@ -313,11 +325,13 @@ function FeatureListView({
   tasksByFeatureId,
   onOpen,
   onCheckoutHandoffPRs,
+  checkingOutFeatures,
 }: {
   features: FeatureSummary[];
   tasksByFeatureId: Map<string, TaskSummary[]>;
   onOpen: (feature: FeatureSummary) => void;
   onCheckoutHandoffPRs: (feature: FeatureSummary) => void;
+  checkingOutFeatures: Set<string>;
 }) {
   const groups = useMemo(() => groupByStatus(features), [features]);
 
@@ -337,6 +351,7 @@ function FeatureListView({
           tasksByFeatureId={tasksByFeatureId}
           onOpen={onOpen}
           onCheckoutHandoffPRs={onCheckoutHandoffPRs}
+          checkingOutFeatures={checkingOutFeatures}
         />
       ))}
     </div>
@@ -347,12 +362,15 @@ function FeatureCard({
   feature,
   onOpen,
   onCheckoutHandoffPRs,
+  checkingOutFeatures,
 }: {
   feature: FeatureSummary;
   onOpen: (feature: FeatureSummary) => void;
   onCheckoutHandoffPRs: (feature: FeatureSummary) => void;
+  checkingOutFeatures: Set<string>;
 }) {
   const meta = lifecycleMeta(feature.status);
+  const checkingOut = checkingOutFeatures.has(feature.id);
   return (
     <div className="group relative">
       <button
@@ -383,10 +401,15 @@ function FeatureCard({
         <button
           type="button"
           title="Checkout PR for review"
+          disabled={checkingOut}
           onClick={() => onCheckoutHandoffPRs(feature)}
-          className="absolute right-1.5 top-1.5 rounded p-1 text-text-muted opacity-0 hover:bg-surface-secondary hover:text-text-primary group-hover:opacity-100"
+          className={`absolute right-1.5 top-1.5 rounded p-1 text-text-muted hover:bg-surface-secondary hover:text-text-primary disabled:pointer-events-none ${checkingOut ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
         >
-          <GitPullRequestArrow className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          {checkingOut ? (
+            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden="true" />
+          ) : (
+            <GitPullRequestArrow className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          )}
         </button>
       )}
     </div>
@@ -397,10 +420,12 @@ function FeatureGridView({
   features,
   onOpen,
   onCheckoutHandoffPRs,
+  checkingOutFeatures,
 }: {
   features: FeatureSummary[];
   onOpen: (feature: FeatureSummary) => void;
   onCheckoutHandoffPRs: (feature: FeatureSummary) => void;
+  checkingOutFeatures: Set<string>;
 }) {
   const columns = useMemo(() => groupByStatus(features), [features]);
 
@@ -431,6 +456,7 @@ function FeatureGridView({
                     feature={f}
                     onOpen={onOpen}
                     onCheckoutHandoffPRs={onCheckoutHandoffPRs}
+                    checkingOutFeatures={checkingOutFeatures}
                   />
                 ))
               )}
@@ -460,12 +486,19 @@ export function FeaturesBrowser() {
   const [query, setQuery] = useState('');
   const [activeChips, setActiveChips] = useState<Set<string>>(new Set());
   const [view, setView] = useState<ViewMode>('list');
+  const [checkingOutFeatures, setCheckingOutFeatures] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     const handler = (event: MessageEvent) => {
       if (event.data?.command === 'featuresLoaded') {
         setFeatures(event.data.features || []);
         setTasks(event.data.tasks || []);
+      } else if (event.data?.command === 'checkoutHandoffPRsDone') {
+        setCheckingOutFeatures((prev) => {
+          const next = new Set(prev);
+          next.delete(event.data.featureId);
+          return next;
+        });
       }
     };
     window.addEventListener('message', handler);
@@ -478,8 +511,10 @@ export function FeaturesBrowser() {
 
   // The extension host confirms (naming every repo/PR involved) before
   // touching anything — see handoffCheckout.ts.
-  const checkoutHandoffPRs = (feature: FeatureSummary) =>
+  const checkoutHandoffPRs = (feature: FeatureSummary) => {
+    setCheckingOutFeatures((prev) => new Set(prev).add(feature.id));
     vscode.postMessage({ command: 'checkoutHandoffPRs', feature });
+  };
 
   /** Switching view resets quick filters — the two filter sets are different
    * axes (task status vs lifecycle stage), so carrying one over as if it
@@ -573,12 +608,14 @@ export function FeaturesBrowser() {
             tasksByFeatureId={tasksByFeatureId}
             onOpen={openFeatureDetail}
             onCheckoutHandoffPRs={checkoutHandoffPRs}
+            checkingOutFeatures={checkingOutFeatures}
           />
         ) : (
           <FeatureGridView
             features={filtered}
             onOpen={openFeatureDetail}
             onCheckoutHandoffPRs={checkoutHandoffPRs}
+            checkingOutFeatures={checkingOutFeatures}
           />
         )}
       </div>

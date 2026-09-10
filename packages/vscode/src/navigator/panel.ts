@@ -29,6 +29,7 @@ import {
   cloneRepo,
   listLinkedRepos,
   removeBrokenLink,
+  resolveLinkedRepoPath,
   unlinkRepo,
 } from '../workspace/repoLinker.js';
 import { readRepoLinkManifest, repairRepoLinkManifest } from '../workspace/repoLinkManifest.js';
@@ -176,6 +177,11 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
 
         case 'checkoutHandoffPRs':
           await checkoutHandoffPRs(this.context, this.codingApiCtx, message.feature);
+          this._postMessage({ command: 'checkoutHandoffPRsDone', featureId: message.feature.id });
+          // Checkout may have switched branches in one or more repos — refresh
+          // the Workspace section's branch badges rather than leaving them
+          // showing whatever was checked out before.
+          await this._loadRepos();
           break;
 
         case 'openFeaturesBrowser':
@@ -205,6 +211,14 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
 
         case 'pullRepo':
           await this._pullRepo(message.name);
+          break;
+
+        case 'pullAllRepos':
+          await this._pullAllRepos();
+          break;
+
+        case 'checkoutDefaultBranches':
+          await this._checkoutDefaultBranches();
           break;
 
         case 'switchRepoBranch':
@@ -443,6 +457,118 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
       vscode.window.showErrorMessage(`Actorium: ${result.message}`);
     }
     this._postMessage({ command: 'pullRepoDone', name });
+    await this._loadRepos();
+  }
+
+  /** Pulls every linked repo's current branch, in parallel — skips a repo
+   * with no usable local path (not linked, or a broken symlink) rather than
+   * erroring the whole batch on one bad repo. */
+  private async _pullAllRepos(): Promise<void> {
+    const workspaceId = this.getWorkspaceId();
+    const folder = workspaceId
+      ? getWorkspaceFolder(this.context, this.codingApiCtx.getBffUrl(), workspaceId)
+      : undefined;
+    if (!folder) {
+      this._postMessage({ command: 'pullAllReposDone' });
+      return;
+    }
+
+    const linked = (await listLinkedRepos(folder)).filter((r) => r.target && !r.broken);
+    if (linked.length === 0) {
+      vscode.window.showInformationMessage('Actorium: No linked repos to pull.');
+      this._postMessage({ command: 'pullAllReposDone' });
+      return;
+    }
+
+    const results = await Promise.all(
+      linked.map(async (r) => ({ name: r.name, result: await pullRepository(r.target as string) })),
+    );
+    const failed = results.filter((r) => !r.result.ok);
+
+    if (failed.length === 0) {
+      vscode.window.showInformationMessage(`Actorium: Pulled ${results.length} repos.`);
+    } else {
+      vscode.window.showWarningMessage(
+        `Actorium: Pulled ${results.length - failed.length} of ${results.length} repos. Failed: ${failed
+          .map((f) => `${f.name} (${f.result.message})`)
+          .join('; ')}`,
+      );
+    }
+    this._postMessage({ command: 'pullAllReposDone' });
+    await this._loadRepos();
+  }
+
+  /** Checks out every linked repo's own base branch (workflow-backend's
+   * `WorkspaceRepo.base_branch` — the SAME "Base branch" column the web
+   * app's Repositories settings page shows), the counterpart to "Checkout
+   * PR for review": one action to put every repo back on its default branch
+   * after reviewing a handoff. Confirms once, naming every repo/branch,
+   * before touching anything — same reasoning as checkoutHandoffPRs. Repos
+   * with no known base branch, or no usable local path, are skipped rather
+   * than erroring the whole batch. */
+  private async _checkoutDefaultBranches(): Promise<void> {
+    const workspaceId = this.getWorkspaceId();
+    const folder = workspaceId
+      ? getWorkspaceFolder(this.context, this.codingApiCtx.getBffUrl(), workspaceId)
+      : undefined;
+    if (!folder || !workspaceId) {
+      this._postMessage({ command: 'checkoutDefaultBranchesDone' });
+      return;
+    }
+
+    const [linked, workspaceRepos, repoLinkManifest] = await Promise.all([
+      listLinkedRepos(folder),
+      getWorkspaceRepos(codingApiConfig(this.codingApiCtx), workspaceId),
+      readRepoLinkManifest(folder),
+    ]);
+
+    const targets: { name: string; branch: string; repoPath: string }[] = [];
+    for (const wr of workspaceRepos ?? []) {
+      if (!wr.base_branch) continue;
+      const repoPath = resolveLinkedRepoPath(linked, repoLinkManifest, wr.repo_id);
+      if (repoPath) targets.push({ name: wr.repo_id, branch: wr.base_branch, repoPath });
+    }
+
+    if (targets.length === 0) {
+      vscode.window.showInformationMessage(
+        'Actorium: No linked repos with a known base branch to check out.',
+      );
+      this._postMessage({ command: 'checkoutDefaultBranchesDone' });
+      return;
+    }
+
+    const summaryList = targets.map((t) => `${t.name} (${t.branch})`).join(', ');
+    const confirmed = await vscode.window.showWarningMessage(
+      `Checkout the base branch in ${targets.length === 1 ? '1 repo' : `${targets.length} repos`}? ${summaryList}.`,
+      { modal: true },
+      'Checkout',
+    );
+    if (confirmed !== 'Checkout') {
+      this._postMessage({ command: 'checkoutDefaultBranchesDone' });
+      return;
+    }
+
+    const results = await Promise.all(
+      targets.map(async (t) => ({
+        name: t.name,
+        branch: t.branch,
+        result: await checkoutBranch(t.repoPath, t.branch),
+      })),
+    );
+    const failed = results.filter((r) => !r.result.ok);
+
+    if (failed.length === 0) {
+      vscode.window.showInformationMessage(
+        `Actorium: Checked out the base branch in ${results.length} repos.`,
+      );
+    } else {
+      vscode.window.showWarningMessage(
+        `Actorium: Checked out ${results.length - failed.length} of ${results.length}. Failed: ${failed
+          .map((f) => `${f.name} (${f.branch} — ${f.result.message})`)
+          .join('; ')}`,
+      );
+    }
+    this._postMessage({ command: 'checkoutDefaultBranchesDone' });
     await this._loadRepos();
   }
 
