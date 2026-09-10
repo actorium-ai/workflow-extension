@@ -176,6 +176,7 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
 
         case 'checkoutHandoffPRs':
           await checkoutHandoffPRs(this.context, this.codingApiCtx, message.feature);
+          this._postMessage({ command: 'checkoutHandoffPRsDone', featureId: message.feature.id });
           break;
 
         case 'openFeaturesBrowser':
@@ -205,6 +206,10 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
 
         case 'pullRepo':
           await this._pullRepo(message.name);
+          break;
+
+        case 'pullAllRepos':
+          await this._pullAllRepos();
           break;
 
         case 'switchRepoBranch':
@@ -443,6 +448,44 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
       vscode.window.showErrorMessage(`Actorium: ${result.message}`);
     }
     this._postMessage({ command: 'pullRepoDone', name });
+    await this._loadRepos();
+  }
+
+  /** Pulls every linked repo's current branch, in parallel — skips a repo
+   * with no usable local path (not linked, or a broken symlink) rather than
+   * erroring the whole batch on one bad repo. */
+  private async _pullAllRepos(): Promise<void> {
+    const workspaceId = this.getWorkspaceId();
+    const folder = workspaceId
+      ? getWorkspaceFolder(this.context, this.codingApiCtx.getBffUrl(), workspaceId)
+      : undefined;
+    if (!folder) {
+      this._postMessage({ command: 'pullAllReposDone' });
+      return;
+    }
+
+    const linked = (await listLinkedRepos(folder)).filter((r) => r.target && !r.broken);
+    if (linked.length === 0) {
+      vscode.window.showInformationMessage('Actorium: No linked repos to pull.');
+      this._postMessage({ command: 'pullAllReposDone' });
+      return;
+    }
+
+    const results = await Promise.all(
+      linked.map(async (r) => ({ name: r.name, result: await pullRepository(r.target as string) })),
+    );
+    const failed = results.filter((r) => !r.result.ok);
+
+    if (failed.length === 0) {
+      vscode.window.showInformationMessage(`Actorium: Pulled ${results.length} repos.`);
+    } else {
+      vscode.window.showWarningMessage(
+        `Actorium: Pulled ${results.length - failed.length} of ${results.length} repos. Failed: ${failed
+          .map((f) => `${f.name} (${f.result.message})`)
+          .join('; ')}`,
+      );
+    }
+    this._postMessage({ command: 'pullAllReposDone' });
     await this._loadRepos();
   }
 

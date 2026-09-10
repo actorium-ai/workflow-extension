@@ -58,7 +58,12 @@ export class FeaturesBrowserPanel {
           FeatureDetailPanel.createOrShow(this.context, this.codingApiCtx, message.feature);
         }
         if (message.command === 'checkoutHandoffPRs' && message.feature) {
-          void checkoutHandoffPRs(this.context, this.codingApiCtx, message.feature);
+          const featureId = message.feature.id;
+          void checkoutHandoffPRs(this.context, this.codingApiCtx, message.feature).then(() => {
+            if (!this.disposed) {
+              this.panel.webview.postMessage({ command: 'checkoutHandoffPRsDone', featureId });
+            }
+          });
         }
       },
     );

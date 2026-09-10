@@ -1,10 +1,12 @@
 import { Popover } from '@heroui/react';
-import { CloudDownload, EllipsisVertical, Loader2, Unlink, Wrench } from 'lucide-react';
+import { CloudDownload, EllipsisVertical, Loader2, RefreshCw, Unlink, Wrench } from 'lucide-react';
 import { useState } from 'react';
 
 interface WorkspaceMenuProps {
   onCloneAllRepos: () => void;
   cloningAll: boolean;
+  onPullAllRepos: () => void;
+  pullingAll: boolean;
   onRepair: () => void;
   repairing: boolean;
   /** Drops the extension's link between this workspace and its local folder
@@ -16,13 +18,16 @@ interface WorkspaceMenuProps {
 
 /** Overflow menu for the "Workspace" section header — houses actions that
  * don't need their own always-visible icon: cloning every unlinked repo
- * (see the extension host's src/navigator/panel.ts _cloneAllRepos),
- * repairing repo-links.json/AGENTS.md/workspace.json from current state
+ * (see the extension host's src/navigator/panel.ts _cloneAllRepos), pulling
+ * every linked repo's current branch (_pullAllRepos), repairing
+ * repo-links.json/AGENTS.md/workspace.json from current state
  * (_repairWorkspace) for when any of those have drifted, and unlinking the
  * workspace folder entirely (_unlinkWorkspaceFolder). */
 export function WorkspaceMenu({
   onCloneAllRepos,
   cloningAll,
+  onPullAllRepos,
+  pullingAll,
   onRepair,
   repairing,
   onUnlinkWorkspace,
@@ -57,6 +62,22 @@ export function WorkspaceMenu({
               <CloudDownload className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
             )}
             Clone repo
+          </button>
+          <button
+            type="button"
+            disabled={pullingAll}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-text-secondary hover:bg-surface-secondary hover:text-text-primary disabled:pointer-events-none disabled:opacity-60"
+            onClick={() => {
+              setOpen(false);
+              onPullAllRepos();
+            }}
+          >
+            {pullingAll ? (
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden="true" />
+            ) : (
+              <RefreshCw className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            )}
+            Pull all repos
           </button>
           <button
             type="button"

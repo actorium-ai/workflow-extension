@@ -26,19 +26,67 @@ function parsePrNumber(prUrl: string): string | undefined {
   return prUrl.match(PR_NUMBER_RE)?.[1];
 }
 
+/** GitHub's `pull/<N>/head` ref only carries the PR's tip commit, not its
+ * source branch name — so the fetch alone can't tell us the branch was
+ * really called (e.g. `feature/skills-registry`), only its number. Ask
+ * the `gh` CLI first, since it reuses whatever GitHub auth the user already
+ * has (works for private repos); if `gh` isn't installed or isn't logged
+ * in, fall back to the unauthenticated REST API, which only works for
+ * public repos. Either failing just means the caller falls back to naming
+ * the local branch `pr-<N>` — checkout still succeeds either way. */
+async function resolvePrBranchName(
+  repoPath: string,
+  prNumber: string,
+): Promise<string | undefined> {
+  try {
+    const { stdout } = await execFile(
+      'gh',
+      ['pr', 'view', prNumber, '--json', 'headRefName', '-q', '.headRefName'],
+      { cwd: repoPath },
+    );
+    const name = stdout.trim();
+    if (name) return name;
+  } catch {
+    // fall through to the REST API
+  }
+
+  try {
+    const { stdout: remoteUrl } = await execFile('git', ['remote', 'get-url', 'origin'], {
+      cwd: repoPath,
+    });
+    const match = remoteUrl.trim().match(/github\.com[/:]([^/]+)\/(.+?)(?:\.git)?$/);
+    if (!match) return undefined;
+    const [, owner, repo] = match;
+    const resp = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`, {
+      headers: { Accept: 'application/vnd.github+json' },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!resp.ok) return undefined;
+    const body = (await resp.json()) as { head?: { ref?: string } };
+    return body.head?.ref || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
- * `git fetch origin pull/<N>/head` then `git checkout -B pr-<N> FETCH_HEAD` —
- * idempotent (`-B` creates-or-resets the local branch), so re-running this on
- * a repo already checked out to `pr-<N>` from a previous run just re-syncs it
- * rather than erroring on "branch already exists".
+ * `git fetch origin pull/<N>/head` then `git checkout -B <branch> FETCH_HEAD`
+ * — idempotent (`-B` creates-or-resets the local branch), so re-running this
+ * on a repo already checked out to that branch from a previous run just
+ * re-syncs it rather than erroring on "branch already exists". `<branch>` is
+ * the PR's real source branch name when it could be resolved (see
+ * resolvePrBranchName above), falling back to `pr-<N>` otherwise.
  */
 async function checkoutPrByNumber(
   repoPath: string,
   prNumber: string,
 ): Promise<{ ok: boolean; message: string }> {
-  const branch = `pr-${prNumber}`;
   try {
-    await execFile('git', ['fetch', 'origin', `pull/${prNumber}/head`], { cwd: repoPath });
+    const [, resolvedName] = await Promise.all([
+      execFile('git', ['fetch', 'origin', `pull/${prNumber}/head`], { cwd: repoPath }),
+      resolvePrBranchName(repoPath, prNumber),
+    ]);
+    const branch = resolvedName ?? `pr-${prNumber}`;
     await execFile('git', ['checkout', '-B', branch, 'FETCH_HEAD'], { cwd: repoPath });
     return { ok: true, message: `Checked out "${branch}".` };
   } catch (err) {
