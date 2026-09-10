@@ -91,6 +91,8 @@ export function Navigator() {
                     cloningAll={c.cloningAll}
                     onPullAllRepos={c.pullAllRepos}
                     pullingAll={c.pullingAll}
+                    onCheckoutDefaultBranches={c.checkoutDefaultBranches}
+                    checkingOutDefaultBranches={c.checkingOutDefaultBranches}
                     onRepair={c.repairWorkspace}
                     repairing={c.repairing}
                     onUnlinkWorkspace={c.unlinkWorkspaceFolder}

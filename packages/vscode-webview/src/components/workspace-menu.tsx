@@ -1,5 +1,13 @@
 import { Popover } from '@heroui/react';
-import { CloudDownload, EllipsisVertical, Loader2, RefreshCw, Unlink, Wrench } from 'lucide-react';
+import {
+  CloudDownload,
+  EllipsisVertical,
+  GitBranch,
+  Loader2,
+  RefreshCw,
+  Unlink,
+  Wrench,
+} from 'lucide-react';
 import { useState } from 'react';
 
 interface WorkspaceMenuProps {
@@ -7,6 +15,8 @@ interface WorkspaceMenuProps {
   cloningAll: boolean;
   onPullAllRepos: () => void;
   pullingAll: boolean;
+  onCheckoutDefaultBranches: () => void;
+  checkingOutDefaultBranches: boolean;
   onRepair: () => void;
   repairing: boolean;
   /** Drops the extension's link between this workspace and its local folder
@@ -19,7 +29,9 @@ interface WorkspaceMenuProps {
 /** Overflow menu for the "Workspace" section header — houses actions that
  * don't need their own always-visible icon: cloning every unlinked repo
  * (see the extension host's src/navigator/panel.ts _cloneAllRepos), pulling
- * every linked repo's current branch (_pullAllRepos), repairing
+ * every linked repo's current branch (_pullAllRepos), checking out every
+ * repo's own base branch (_checkoutDefaultBranches — the counterpart to a
+ * feature's "Checkout PR for review"), repairing
  * repo-links.json/AGENTS.md/workspace.json from current state
  * (_repairWorkspace) for when any of those have drifted, and unlinking the
  * workspace folder entirely (_unlinkWorkspaceFolder). */
@@ -28,6 +40,8 @@ export function WorkspaceMenu({
   cloningAll,
   onPullAllRepos,
   pullingAll,
+  onCheckoutDefaultBranches,
+  checkingOutDefaultBranches,
   onRepair,
   repairing,
   onUnlinkWorkspace,
@@ -78,6 +92,22 @@ export function WorkspaceMenu({
               <RefreshCw className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
             )}
             Pull all repos
+          </button>
+          <button
+            type="button"
+            disabled={checkingOutDefaultBranches}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-text-secondary hover:bg-surface-secondary hover:text-text-primary disabled:pointer-events-none disabled:opacity-60"
+            onClick={() => {
+              setOpen(false);
+              onCheckoutDefaultBranches();
+            }}
+          >
+            {checkingOutDefaultBranches ? (
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden="true" />
+            ) : (
+              <GitBranch className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            )}
+            Checkout default branch
           </button>
           <button
             type="button"

@@ -51,6 +51,7 @@ export function useNavigatorController() {
   const [mcpCliInstalling, setMcpCliInstalling] = useState(false);
   const [cloningAll, setCloningAll] = useState(false);
   const [pullingAll, setPullingAll] = useState(false);
+  const [checkingOutDefaultBranches, setCheckingOutDefaultBranches] = useState(false);
   const [repairing, setRepairing] = useState(false);
   const [pullingRepos, setPullingRepos] = useState<Set<string>>(new Set());
   const [checkingOutFeatures, setCheckingOutFeatures] = useState<Set<string>>(new Set());
@@ -118,6 +119,10 @@ export function useNavigatorController() {
   const pullAllRepos = useCallback(() => {
     setPullingAll(true);
     vscode.postMessage({ command: 'pullAllRepos' });
+  }, []);
+  const checkoutDefaultBranches = useCallback(() => {
+    setCheckingOutDefaultBranches(true);
+    vscode.postMessage({ command: 'checkoutDefaultBranches' });
   }, []);
   const repairWorkspace = useCallback(() => {
     setRepairing(true);
@@ -241,6 +246,9 @@ export function useNavigatorController() {
           break;
         case 'pullAllReposDone':
           setPullingAll(false);
+          break;
+        case 'checkoutDefaultBranchesDone':
+          setCheckingOutDefaultBranches(false);
           break;
         case 'pullRepoDone':
           setPullingRepos((prev) => {
@@ -384,6 +392,8 @@ export function useNavigatorController() {
     cloningAll,
     pullAllRepos,
     pullingAll,
+    checkoutDefaultBranches,
+    checkingOutDefaultBranches,
     repairWorkspace,
     repairing,
     unlinkWorkspaceFolder,
