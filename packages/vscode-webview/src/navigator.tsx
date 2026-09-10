@@ -36,13 +36,17 @@ export function Navigator() {
   }
 
   if (!c.isConnected) {
-    return <AuthPrompt visible onConnect={c.connect} />;
+    return <AuthPrompt visible onConnect={c.connect} environmentLabel={c.environmentLabel} />;
   }
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-3">
-        <WorkspacePill workspaceLabel={c.workspaceLabel} onSwitchWorkspace={c.switchWorkspace} />
+        <WorkspacePill
+          workspaceLabel={c.workspaceLabel}
+          environmentLabel={c.accounts.find((a) => a.isActive)?.environmentLabel}
+          onSwitchWorkspace={c.switchWorkspace}
+        />
         <UserMenu
           profile={c.userProfile}
           accounts={c.accounts}
@@ -99,6 +103,9 @@ export function Navigator() {
               onOpenWorkspaceFolder={c.openWorkspaceFolder}
               onAddRepo={c.addRepo}
               onUnlinkRepo={c.unlinkRepo}
+              onPullRepo={c.pullRepo}
+              pullingRepos={c.pullingRepos}
+              onSwitchBranch={c.switchRepoBranch}
               onCloneRepo={(repo) => repo.repoUrl && c.cloneRepo(repo.repoUrl, repo.name)}
               onTagInPrompt={c.tagInPrompt}
             />
@@ -121,6 +128,11 @@ export function Navigator() {
                 onConnect={c.connectAgent}
                 onDisconnect={c.disconnectAgent}
                 onOpenCli={c.openAgentCli}
+                activeAccountLabel={
+                  c.accounts.find((a) => a.isActive)?.user.display_name ||
+                  c.accounts.find((a) => a.isActive)?.user.email ||
+                  null
+                }
               />
             </div>
           </CollapsibleSection>
@@ -140,19 +152,6 @@ export function Navigator() {
           </CollapsibleSection>
 
           <CollapsibleSection
-            title="Docs"
-            icon={<FolderOpen className="h-3 w-3 shrink-0" aria-hidden="true" />}
-            defaultOpen={false}
-          >
-            <DocList
-              docs={c.docs}
-              features={c.features}
-              onOpenDocument={c.openDocument}
-              onTagInPrompt={c.tagInPrompt}
-            />
-          </CollapsibleSection>
-
-          <CollapsibleSection
             title="Features"
             icon={<ListTodo className="h-3 w-3 shrink-0" aria-hidden="true" />}
             defaultOpen={false}
@@ -169,7 +168,27 @@ export function Navigator() {
           >
             <FeatureList
               features={c.features}
+              loading={c.featuresLoading}
+              error={c.featuresError}
+              onRetry={c.requestFeatures}
               onOpenFeatureDetail={c.openFeatureDetail}
+              onTagInPrompt={c.tagInPrompt}
+              onCheckoutHandoffPRs={c.checkoutHandoffPRs}
+            />
+          </CollapsibleSection>
+
+          <CollapsibleSection
+            title="Docs"
+            icon={<FolderOpen className="h-3 w-3 shrink-0" aria-hidden="true" />}
+            defaultOpen={false}
+          >
+            <DocList
+              docs={c.docs}
+              features={c.features}
+              loading={c.docsLoading}
+              error={c.docsError}
+              onRetry={c.requestDocs}
+              onOpenDocument={c.openDocument}
               onTagInPrompt={c.tagInPrompt}
             />
           </CollapsibleSection>

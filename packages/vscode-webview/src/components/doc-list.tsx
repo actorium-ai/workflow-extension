@@ -19,11 +19,15 @@ import {
 import { type ComponentType, type ReactNode, useState } from 'react';
 
 import type { FeatureSummary, StorageDocument } from '../utils/types.ts';
+import { SectionState } from './section-state.tsx';
 import { LifecycleGlyph } from './status-glyph.tsx';
 
 interface DocListProps {
   docs: StorageDocument[];
   features: FeatureSummary[];
+  loading?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
   onOpenDocument: (doc: StorageDocument) => void;
   /** Inserts a plain-text reference to a document into the active terminal
    * (or clipboard, if none) — see NavigatorPanelProvider's tagInPrompt
@@ -271,11 +275,39 @@ function FolderContents({
   );
 }
 
+/**
+ * Walks down a chain of folders that each hold nothing but a single
+ * subfolder (no files of their own) and combines them into one displayed
+ * row — VS Code Explorer's "compact folders" behavior (on by default there:
+ * `.claude` containing only `skills` renders as one row, ".claude / skills",
+ * not two nested rows). Stops before absorbing a feature-root folder into
+ * the chain (it needs its own distinct lifecycle-glyph row, not a plain
+ * folder segment) or once a folder has files or more than one subfolder.
+ */
+function compactFolderChain(
+  folder: TreeFolder,
+  featureRoots: Map<string, FeatureSummary>,
+): { names: string[]; folder: TreeFolder } {
+  const names = [folder.name];
+  let current = folder;
+  while (
+    current.files.length === 0 &&
+    current.folders.length === 1 &&
+    !featureRoots.has(current.folders[0].path)
+  ) {
+    current = current.folders[0];
+    names.push(current.name);
+  }
+  return { names, folder: current };
+}
+
 /** One folder in the tree — renders as a feature group (lifecycle glyph +
  * feature name) when its path is a known feature root, otherwise as a plain
- * structural folder (generic folder icon). Either way, its children recurse
- * through the same check, so a feature's own subfolders (e.g. "handoffs")
- * render as plain folders nested inside the feature group. */
+ * structural folder (generic folder icon), compacted with any single-child
+ * subfolder chain beneath it (see compactFolderChain). Either way, its
+ * children recurse through the same check, so a feature's own subfolders
+ * (e.g. "handoffs") render as plain folders nested inside the feature
+ * group. */
 function FolderNode({
   folder,
   featureRoots,
@@ -289,6 +321,9 @@ function FolderNode({
 }) {
   const [open, setOpen] = useState(false);
   const feature = featureRoots.get(folder.path);
+  const { names, folder: target } = feature
+    ? { names: [folder.name], folder }
+    : compactFolderChain(folder, featureRoots);
 
   const label: ReactNode = feature ? (
     <>
@@ -300,7 +335,9 @@ function FolderNode({
   ) : (
     <>
       <Folder className="h-3.5 w-3.5 shrink-0 text-text-muted" aria-hidden="true" />
-      <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">{folder.name}</span>
+      <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
+        {names.join(' / ')}
+      </span>
     </>
   );
 
@@ -317,7 +354,7 @@ function FolderNode({
       {open && (
         <div className="mt-0.5 ml-3 border-l border-border pl-2">
           <FolderContents
-            folder={folder}
+            folder={target}
             featureRoots={featureRoots}
             onOpenDocument={onOpenDocument}
             onTagInPrompt={onTagInPrompt}
@@ -328,9 +365,23 @@ function FolderNode({
   );
 }
 
-export function DocList({ docs, features, onOpenDocument, onTagInPrompt }: DocListProps) {
+export function DocList({
+  docs,
+  features,
+  loading,
+  error,
+  onRetry,
+  onOpenDocument,
+  onTagInPrompt,
+}: DocListProps) {
   if (docs.length === 0) {
-    return <div className="px-3 py-3 text-center text-xs text-text-muted">No documents yet.</div>;
+    if (error) {
+      return <SectionState kind="error" message="Couldn't load documents." onRetry={onRetry} />;
+    }
+    if (loading) {
+      return <SectionState kind="loading" message="Loading documents…" />;
+    }
+    return <SectionState kind="empty" message="No documents yet." />;
   }
 
   const tree = buildTree(docs);

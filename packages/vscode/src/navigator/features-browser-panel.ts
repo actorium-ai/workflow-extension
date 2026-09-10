@@ -2,6 +2,7 @@ import type { FeatureSummary } from '@workflow-extension/shared';
 import * as vscode from 'vscode';
 
 import { buildWebviewHtml } from '../webview-html.js';
+import { checkoutHandoffPRs } from '../workspace/handoffCheckout.js';
 import { FeatureDetailPanel } from './feature-detail-panel.js';
 import { codingApiConfig, type CodingApiContext, getWorkspaceDetail } from './workflow-api.js';
 
@@ -55,6 +56,9 @@ export class FeaturesBrowserPanel {
         if (message.command === 'ready') void this.loadFeatures();
         if (message.command === 'openFeatureDetail' && message.feature) {
           FeatureDetailPanel.createOrShow(this.context, this.codingApiCtx, message.feature);
+        }
+        if (message.command === 'checkoutHandoffPRs' && message.feature) {
+          void checkoutHandoffPRs(this.context, this.codingApiCtx, message.feature);
         }
       },
     );

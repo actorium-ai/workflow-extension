@@ -227,11 +227,33 @@ export function deriveRepoNameFromUrl(url: string): string {
   return idx >= 0 ? cleaned.slice(idx + 1) : cleaned;
 }
 
-function gitErrorMessage(err: unknown): string {
+/** Exported for reuse by gitApi.ts's execFile fallback path and by
+ * handoffCheckout.ts's fetch/checkout calls — same error shape for every git
+ * CLI invocation this extension makes. */
+export function gitErrorMessage(err: unknown): string {
   const code = (err as NodeJS.ErrnoException)?.code;
   if (code === 'ENOENT') return '"git" not found on your PATH — install git first, then try again.';
   const stderr = (err as { stderr?: string })?.stderr;
   return stderr?.trim() || (err instanceof Error ? err.message : String(err));
+}
+
+/**
+ * Resolves a workspace repo_id to its local checkout path, using the SAME
+ * matching rule as panel.ts's _loadRepos() (repo-links.json maps a local
+ * folder name to a repo_id when they differ; otherwise the folder name IS
+ * the repo_id, case-insensitively) — kept here as the one place this lookup
+ * is implemented, so _loadRepos() and any other caller (e.g. handoffCheckout.ts)
+ * can't drift apart. Returns undefined for a repo with no local link, or a
+ * broken symlink (no usable target).
+ */
+export function resolveLinkedRepoPath(
+  linked: LinkedRepo[],
+  repoLinkManifest: Record<string, string>,
+  repoId: string,
+): string | undefined {
+  const key = repoId.toLowerCase();
+  const local = linked.find((r) => (repoLinkManifest[r.name] ?? r.name).toLowerCase() === key);
+  return local?.target;
 }
 
 /**

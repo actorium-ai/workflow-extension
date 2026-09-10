@@ -30,14 +30,22 @@ export function IconSquare({ name, className }: { name: string; className?: stri
  * OrgWorkspaceSwitcher trigger button styling. */
 export function WorkspacePill({
   workspaceLabel,
+  environmentLabel,
   onSwitchWorkspace,
 }: {
   workspaceLabel: string | null;
+  /** The active account's environment (e.g. "staging", a custom bffUrl) —
+   * shown as a small tag so it's obvious at a glance which backend a local
+   * agent's MCP calls will actually hit, before invoking one. Omitted for
+   * "Production" (the overwhelming common case) to keep the header visually
+   * quiet there — see AuthManager's environmentLabelForBffUrl. */
+  environmentLabel?: string | null;
   onSwitchWorkspace: () => void;
 }) {
   const parts = workspaceLabel ? workspaceLabel.split(' · ') : [];
   const workspaceName = parts[0];
   const orgName = parts[1];
+  const showEnvironmentTag = !!environmentLabel && environmentLabel !== 'Production';
 
   return (
     <button
@@ -46,6 +54,11 @@ export function WorkspacePill({
       title={workspaceLabel ? `Workspace: ${workspaceLabel}` : 'Select workspace'}
       onClick={onSwitchWorkspace}
     >
+      {showEnvironmentTag && (
+        <span className="max-[300px]:hidden shrink-0 rounded bg-surface-secondary px-1 py-px text-[9px] font-medium uppercase tracking-wide text-text-muted">
+          {environmentLabel}
+        </span>
+      )}
       {orgName ? (
         <>
           {/* Org icon/name/slash drop below ~300px of panel width, keeping

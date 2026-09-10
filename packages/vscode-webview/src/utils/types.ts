@@ -59,6 +59,11 @@ export interface LinkedRepo {
    * folder it pointed at is gone. Cleared by the section's "Repair"
    * action, which removes the dangling link and its stale config entry. */
   broken?: boolean;
+  /** Whichever branch is currently checked out locally (see the extension
+   * host's src/git/gitApi.ts) — undefined for a not-yet-linked repo, a
+   * broken symlink, or a detached HEAD. Purely informational; "Pull latest"
+   * always pulls whatever this is, it never switches branches. */
+  currentBranch?: string;
 }
 
 /** Local coding agents the extension knows how to register actorium-mcp
@@ -72,6 +77,18 @@ export interface AgentStatus {
    * (true for Codex/opencode, which have no live health check). */
   connected?: boolean;
   detail?: string;
+  /** Which account/workspace this registration was last written for — see
+   * the extension host's mcpRegistrationState.ts. Undefined for a
+   * registration made before that tracking existed. */
+  boundAccountLabel?: string;
+  boundWorkspaceLabel?: string;
+  /** This registration is bound to a different account/workspace than the
+   * one currently active — needs a Reconnect. */
+  stale?: boolean;
+  /** The on-disk MCP config was rewritten after this agent's CLI session was
+   * last opened — restart it to pick up the change. Best-effort: the
+   * extension can't observe whether that session is still running. */
+  needsRestart?: boolean;
 }
 
 export type AgentStatuses = Partial<Record<AgentTarget, AgentStatus>>;

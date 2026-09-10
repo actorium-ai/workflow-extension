@@ -61,6 +61,26 @@ body {
   background: var(--color-bg);
 }
 
+/* The sidebar Navigator and the feature-detail/features-browser editor-tab
+   panels share this one bundle/stylesheet (see main.tsx), but they sit in
+   different VS Code chrome: an editor-tab panel should match
+   editor-background (the --color-bg default above), while the sidebar view
+   should match sideBar-background — most themes shade the two differently
+   (Claude Code's own sidebar panel uses sideBar-background), and using
+   editor-background there made the panel look like a mismatched insert next
+   to the rest of the sidebar instead of blending into it natively. */
+body[data-panel-kind='navigator'] {
+  --color-bg: var(--vscode-sideBar-background, var(--vscode-editor-background));
+}
+
+/* The Git panel lives in VS Code's bottom Panel area (alongside Terminal/
+   Output/Problems — see package.json's "actorium-git" viewsContainers.panel
+   entry), which has its own distinct background token from both the editor
+   and the sidebar. */
+body[data-panel-kind='git'] {
+  --color-bg: var(--vscode-panel-background, var(--vscode-editor-background));
+}
+
 #root {
   display: flex;
   flex-direction: column;

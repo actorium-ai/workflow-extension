@@ -1,4 +1,11 @@
-import { ChevronDown, ChevronRight, LayoutGrid, List, Search } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronRight,
+  GitPullRequestArrow,
+  LayoutGrid,
+  List,
+  Search,
+} from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
 import { LifecycleGlyph, StatusPill, TaskStatusGlyph } from './components/status-glyph.tsx';
@@ -179,15 +186,17 @@ function FeatureListRow({
   feature,
   tasks,
   onOpen,
+  onCheckoutHandoffPRs,
 }: {
   feature: FeatureSummary;
   tasks: TaskSummary[];
   onOpen: (feature: FeatureSummary) => void;
+  onCheckoutHandoffPRs: (feature: FeatureSummary) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const meta = lifecycleMeta(feature.status);
   return (
-    <div className="border-b border-border last:border-b-0">
+    <div className="group border-b border-border last:border-b-0">
       <div className="flex items-center gap-2 px-3 py-2 hover:bg-surface-secondary">
         <button
           type="button"
@@ -212,6 +221,16 @@ function FeatureListRow({
             {feature.feature_name || feature.title || feature.id}
           </span>
         </button>
+        {feature.status === 'in_handoff' && (
+          <button
+            type="button"
+            title="Checkout PR for review"
+            onClick={() => onCheckoutHandoffPRs(feature)}
+            className="shrink-0 rounded p-1 text-text-muted opacity-0 hover:bg-surface-secondary hover:text-text-primary group-hover:opacity-100"
+          >
+            <GitPullRequestArrow className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          </button>
+        )}
         <span
           className="shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-semibold"
           style={{ color: meta.color, background: tint(meta.color) }}
@@ -238,11 +257,13 @@ function FeatureStatusSection({
   features,
   tasksByFeatureId,
   onOpen,
+  onCheckoutHandoffPRs,
 }: {
   status: string;
   features: FeatureSummary[];
   tasksByFeatureId: Map<string, TaskSummary[]>;
   onOpen: (feature: FeatureSummary) => void;
+  onCheckoutHandoffPRs: (feature: FeatureSummary) => void;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const meta = lifecycleMeta(status);
@@ -279,6 +300,7 @@ function FeatureStatusSection({
               feature={f}
               tasks={tasksByFeatureId.get(f.id) ?? []}
               onOpen={onOpen}
+              onCheckoutHandoffPRs={onCheckoutHandoffPRs}
             />
           ))
         ))}
@@ -290,10 +312,12 @@ function FeatureListView({
   features,
   tasksByFeatureId,
   onOpen,
+  onCheckoutHandoffPRs,
 }: {
   features: FeatureSummary[];
   tasksByFeatureId: Map<string, TaskSummary[]>;
   onOpen: (feature: FeatureSummary) => void;
+  onCheckoutHandoffPRs: (feature: FeatureSummary) => void;
 }) {
   const groups = useMemo(() => groupByStatus(features), [features]);
 
@@ -312,6 +336,7 @@ function FeatureListView({
           features={groupFeatures}
           tasksByFeatureId={tasksByFeatureId}
           onOpen={onOpen}
+          onCheckoutHandoffPRs={onCheckoutHandoffPRs}
         />
       ))}
     </div>
@@ -321,45 +346,61 @@ function FeatureListView({
 function FeatureCard({
   feature,
   onOpen,
+  onCheckoutHandoffPRs,
 }: {
   feature: FeatureSummary;
   onOpen: (feature: FeatureSummary) => void;
+  onCheckoutHandoffPRs: (feature: FeatureSummary) => void;
 }) {
   const meta = lifecycleMeta(feature.status);
   return (
-    <button
-      type="button"
-      title={feature.next_action || feature.current_stage}
-      onClick={() => onOpen(feature)}
-      className="flex w-full flex-col rounded-md border border-border bg-surface px-3 py-2.5 text-left hover:bg-surface-secondary"
-    >
-      {/* digital-factory-ui's kanban card shows a short mono id above the
-          title, since its own `id` is a human-readable slug from YAML — this
-          app's FeatureSummary.id is a raw backend UUID instead, so showing it
-          here would just be meaningless noise; the name is the only useful
-          identity we have, shown once. */}
-      <div className="mb-2.5 flex items-center gap-1.5">
-        <LifecycleGlyph stage={feature.status} size={12} />
-        <p className="min-w-0 flex-1 truncate text-xs font-medium leading-snug text-text-primary">
-          {feature.feature_name || feature.title || feature.id}
-        </p>
-      </div>
-      <span
-        className="w-fit shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold"
-        style={{ color: meta.color, background: tint(meta.color) }}
+    <div className="group relative">
+      <button
+        type="button"
+        title={feature.next_action || feature.current_stage}
+        onClick={() => onOpen(feature)}
+        className="flex w-full flex-col rounded-md border border-border bg-surface px-3 py-2.5 text-left hover:bg-surface-secondary"
       >
-        {meta.label}
-      </span>
-    </button>
+        {/* digital-factory-ui's kanban card shows a short mono id above the
+            title, since its own `id` is a human-readable slug from YAML — this
+            app's FeatureSummary.id is a raw backend UUID instead, so showing it
+            here would just be meaningless noise; the name is the only useful
+            identity we have, shown once. */}
+        <div className="mb-2.5 flex items-center gap-1.5">
+          <LifecycleGlyph stage={feature.status} size={12} />
+          <p className="min-w-0 flex-1 truncate text-xs font-medium leading-snug text-text-primary">
+            {feature.feature_name || feature.title || feature.id}
+          </p>
+        </div>
+        <span
+          className="w-fit shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+          style={{ color: meta.color, background: tint(meta.color) }}
+        >
+          {meta.label}
+        </span>
+      </button>
+      {feature.status === 'in_handoff' && (
+        <button
+          type="button"
+          title="Checkout PR for review"
+          onClick={() => onCheckoutHandoffPRs(feature)}
+          className="absolute right-1.5 top-1.5 rounded p-1 text-text-muted opacity-0 hover:bg-surface-secondary hover:text-text-primary group-hover:opacity-100"
+        >
+          <GitPullRequestArrow className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        </button>
+      )}
+    </div>
   );
 }
 
 function FeatureGridView({
   features,
   onOpen,
+  onCheckoutHandoffPRs,
 }: {
   features: FeatureSummary[];
   onOpen: (feature: FeatureSummary) => void;
+  onCheckoutHandoffPRs: (feature: FeatureSummary) => void;
 }) {
   const columns = useMemo(() => groupByStatus(features), [features]);
 
@@ -384,7 +425,14 @@ function FeatureGridView({
                   No features
                 </div>
               ) : (
-                groupFeatures.map((f) => <FeatureCard key={f.id} feature={f} onOpen={onOpen} />)
+                groupFeatures.map((f) => (
+                  <FeatureCard
+                    key={f.id}
+                    feature={f}
+                    onOpen={onOpen}
+                    onCheckoutHandoffPRs={onCheckoutHandoffPRs}
+                  />
+                ))
               )}
             </div>
           </div>
@@ -427,6 +475,11 @@ export function FeaturesBrowser() {
 
   const openFeatureDetail = (feature: FeatureSummary) =>
     vscode.postMessage({ command: 'openFeatureDetail', feature });
+
+  // The extension host confirms (naming every repo/PR involved) before
+  // touching anything — see handoffCheckout.ts.
+  const checkoutHandoffPRs = (feature: FeatureSummary) =>
+    vscode.postMessage({ command: 'checkoutHandoffPRs', feature });
 
   /** Switching view resets quick filters — the two filter sets are different
    * axes (task status vs lifecycle stage), so carrying one over as if it
@@ -519,9 +572,14 @@ export function FeaturesBrowser() {
             features={filtered}
             tasksByFeatureId={tasksByFeatureId}
             onOpen={openFeatureDetail}
+            onCheckoutHandoffPRs={checkoutHandoffPRs}
           />
         ) : (
-          <FeatureGridView features={filtered} onOpen={openFeatureDetail} />
+          <FeatureGridView
+            features={filtered}
+            onOpen={openFeatureDetail}
+            onCheckoutHandoffPRs={checkoutHandoffPRs}
+          />
         )}
       </div>
     </div>

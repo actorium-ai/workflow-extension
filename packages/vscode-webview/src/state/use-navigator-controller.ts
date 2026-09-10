@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type {
   AccountSummary,
@@ -20,12 +20,28 @@ const SKILLS_TARGETS: AgentTarget[] = ['claude', 'codex', 'opencode'];
 
 export function useNavigatorController() {
   const [isConnected, setIsConnected] = useState(false);
+  /** Display label for whichever backend this window is currently scoped
+   * to — meaningful even before any account is signed in for it (see
+   * AuthManager.getEnvironmentLabel), so the pre-connect AuthPrompt can say
+   * which backend a "Connect" click is about to authenticate against. */
+  const [environmentLabel, setEnvironmentLabel] = useState<string | null>(null);
   const [workspaceLabel, setWorkspaceLabel] = useState<string | null>(null);
   const [userProfile, setUserProfile] = useState<MeUser | null>(null);
   const [accounts, setAccounts] = useState<AccountSummary[]>([]);
   const [sessionExpired, setSessionExpired] = useState(false);
   const [docs, setDocs] = useState<StorageDocument[]>([]);
+  // True until the first docsLoaded message arrives (success or failure) —
+  // set from the initial value, not from an effect, so requestDocs stays a
+  // plain postMessage call safe to invoke from inside an effect (calling
+  // setState synchronously in an effect body triggers cascading renders;
+  // see react-hooks/set-state-in-effect). Never flips back to true after a
+  // later refetch (account switch, Retry click) — those replace docs/
+  // docsError directly without a loading flash.
+  const [docsLoading, setDocsLoading] = useState(true);
+  const [docsError, setDocsError] = useState<string | null>(null);
   const [features, setFeatures] = useState<FeatureSummary[]>([]);
+  const [featuresLoading, setFeaturesLoading] = useState(true);
+  const [featuresError, setFeaturesError] = useState<string | null>(null);
   const [versionBlocked, setVersionBlocked] = useState<VersionEntry | null>(null);
   const [repos, setRepos] = useState<LinkedRepo[]>([]);
   const [hasWorkspaceFolder, setHasWorkspaceFolder] = useState(false);
@@ -35,12 +51,18 @@ export function useNavigatorController() {
   const [mcpCliInstalling, setMcpCliInstalling] = useState(false);
   const [cloningAll, setCloningAll] = useState(false);
   const [repairing, setRepairing] = useState(false);
+  const [pullingRepos, setPullingRepos] = useState<Set<string>>(new Set());
   const [technicalSkillsStatuses, setTechnicalSkillsStatuses] = useState<TechnicalSkillsStatuses>(
     {},
   );
   const [technicalSkillsInstalling, setTechnicalSkillsInstalling] = useState<Set<AgentTarget>>(
     new Set(),
   );
+  // Bumped by the extension host whenever it rewrites an already-registered
+  // agent's MCP config after an account/workspace/environment switch (see
+  // panel.ts's setMcpConfigUpdatedAt) — used only to trigger the refetch
+  // effect below, never rendered directly.
+  const [mcpConfigUpdatedAt, setMcpConfigUpdatedAt] = useState<number | null>(null);
 
   const connect = useCallback(() => vscode.postMessage({ command: 'connect' }), []);
   const switchWorkspace = useCallback(() => vscode.postMessage({ command: 'switchWorkspace' }), []);
@@ -66,6 +88,18 @@ export function useNavigatorController() {
   const addRepo = useCallback(() => vscode.postMessage({ command: 'addRepo' }), []);
   const unlinkRepo = useCallback(
     (name: string) => vscode.postMessage({ command: 'unlinkRepo', name }),
+    [],
+  );
+  const pullRepo = useCallback((name: string) => {
+    setPullingRepos((prev) => new Set(prev).add(name));
+    vscode.postMessage({ command: 'pullRepo', name });
+  }, []);
+  /** Shows a native QuickPick of every local/remote branch for this repo
+   * (see panel.ts's _switchRepoBranch) — a searchable list is the better
+   * fit for "pick one of possibly many branches" than a webview dropdown
+   * would be, unlike the feature context menu's small fixed action list. */
+  const switchRepoBranch = useCallback(
+    (name: string) => vscode.postMessage({ command: 'switchRepoBranch', name }),
     [],
   );
   /** The per-row "Clone" action on a known-but-unlinked workspace repo —
@@ -134,6 +168,10 @@ export function useNavigatorController() {
     (feature: FeatureSummary) => vscode.postMessage({ command: 'openFeatureDetail', feature }),
     [],
   );
+  const checkoutHandoffPRs = useCallback(
+    (feature: FeatureSummary) => vscode.postMessage({ command: 'checkoutHandoffPRs', feature }),
+    [],
+  );
   const openFeaturesBrowser = useCallback(
     () => vscode.postMessage({ command: 'openFeaturesBrowser' }),
     [],
@@ -153,6 +191,7 @@ export function useNavigatorController() {
       switch (msg.command) {
         case 'connectionChanged':
           setIsConnected(!!msg.connected);
+          setEnvironmentLabel(msg.environmentLabel ?? null);
           break;
         case 'workspaceLabelChanged':
           setWorkspaceLabel(msg.label ?? null);
@@ -168,9 +207,13 @@ export function useNavigatorController() {
           break;
         case 'docsLoaded':
           setDocs(msg.docs || []);
+          setDocsError(msg.error ?? null);
+          setDocsLoading(false);
           break;
         case 'featuresLoaded':
           setFeatures(msg.features || []);
+          setFeaturesError(msg.error ?? null);
+          setFeaturesLoading(false);
           break;
         case 'versionBlocked':
           setVersionBlocked(msg.entry ?? null);
@@ -190,6 +233,13 @@ export function useNavigatorController() {
         case 'cloneAllReposDone':
           setCloningAll(false);
           break;
+        case 'pullRepoDone':
+          setPullingRepos((prev) => {
+            const next = new Set(prev);
+            next.delete(msg.name);
+            return next;
+          });
+          break;
         case 'repairWorkspaceDone':
           setRepairing(false);
           break;
@@ -203,6 +253,9 @@ export function useNavigatorController() {
             return next;
           });
           break;
+        case 'mcpConfigUpdated':
+          setMcpConfigUpdatedAt(msg.updatedAt ?? Date.now());
+          break;
       }
     };
     window.addEventListener('message', handler);
@@ -215,11 +268,20 @@ export function useNavigatorController() {
     vscode.postMessage({ command: 'ready' });
   }, []);
 
+  const activeAccountId = accounts.find((a) => a.isActive)?.id ?? null;
+
   // Fetch each section once a workspace is available (initial ready sync AND
   // any later workspace switch). Docs/features are also kept fresh after
   // this by the extension host itself (NavigatorPanelProvider's visibility
   // listener + poll interval, panel.ts) re-pushing docsLoaded/featuresLoaded
   // without this effect re-running.
+  //
+  // activeAccountId is also a dependency: switching accounts without a
+  // workspace-label change (e.g. two accounts on the same backend that
+  // happen to share a workspace, or switching before a folder-local
+  // workspaceLabel is restored) must still re-fetch MCP/docs/features status
+  // for the newly-active account rather than silently keeping whatever the
+  // previous account's session last returned.
   useEffect(() => {
     if (isConnected && workspaceLabel) {
       requestDocs();
@@ -232,6 +294,7 @@ export function useNavigatorController() {
   }, [
     isConnected,
     workspaceLabel,
+    activeAccountId,
     requestDocs,
     requestFeatures,
     requestRepos,
@@ -240,14 +303,43 @@ export function useNavigatorController() {
     requestTechnicalSkillsStatus,
   ]);
 
+  // A session that just recovered from expired may have had earlier
+  // fetches silently fail (or return stale-but-successful data) while
+  // expired — re-sync the sections most likely to have gone stale the
+  // moment the session becomes valid again, rather than waiting for the
+  // user to trigger some other refetch.
+  const prevSessionExpired = useRef(sessionExpired);
+  useEffect(() => {
+    if (prevSessionExpired.current && !sessionExpired && isConnected && workspaceLabel) {
+      requestMcpStatus();
+      requestDocs();
+      requestFeatures();
+    }
+    prevSessionExpired.current = sessionExpired;
+  }, [sessionExpired, isConnected, workspaceLabel, requestMcpStatus, requestDocs, requestFeatures]);
+
+  // The extension host rewrote an already-registered agent's MCP config
+  // (see mcpConfigUpdated above) — refresh the agent-status list so a
+  // stale/needs-restart badge appears without waiting for the next poll.
+  useEffect(() => {
+    if (mcpConfigUpdatedAt !== null) requestMcpStatus();
+  }, [mcpConfigUpdatedAt, requestMcpStatus]);
+
   return {
     isConnected,
+    environmentLabel,
     workspaceLabel,
     userProfile,
     accounts,
     sessionExpired,
     docs,
+    docsLoading,
+    docsError,
+    requestDocs,
     features,
+    featuresLoading,
+    featuresError,
+    requestFeatures,
     connect,
     switchWorkspace,
     signOut,
@@ -258,6 +350,7 @@ export function useNavigatorController() {
     reload,
     openDocument,
     openFeatureDetail,
+    checkoutHandoffPRs,
     openFeaturesBrowser,
     tagInPrompt,
     versionBlocked,
@@ -266,6 +359,9 @@ export function useNavigatorController() {
     hasWorkspaceFolder,
     addRepo,
     unlinkRepo,
+    pullRepo,
+    pullingRepos,
+    switchRepoBranch,
     cloneRepo,
     cloneAllRepos,
     cloningAll,
