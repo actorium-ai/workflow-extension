@@ -177,6 +177,10 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
         case 'checkoutHandoffPRs':
           await checkoutHandoffPRs(this.context, this.codingApiCtx, message.feature);
           this._postMessage({ command: 'checkoutHandoffPRsDone', featureId: message.feature.id });
+          // Checkout may have switched branches in one or more repos — refresh
+          // the Workspace section's branch badges rather than leaving them
+          // showing whatever was checked out before.
+          await this._loadRepos();
           break;
 
         case 'openFeaturesBrowser':
