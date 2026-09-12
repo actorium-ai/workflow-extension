@@ -19,12 +19,12 @@ interface TechnicalSkillsListProps {
 }
 
 /**
- * Copies workflow-extension's bundled Claude Technical Skills (curated
- * SKILL.md folders — see the extension host's src/workspace/
- * technicalSkills.ts) into each agent's own skills directory
- * (.claude/skills, .codex/skills, .opencode/skills) inside the workspace
- * folder. Each row's action flips between Install/Uninstall based on
- * current status, mirroring AgentStatusList's Connect/Disconnect toggle.
+ * Syncs this workspace's enabled skills from workflow-backend's skills
+ * registry (see the extension host's src/workspace/technicalSkills.ts) into
+ * each agent's own skills directory (.claude/skills, .codex/skills,
+ * .opencode/skills) inside the workspace folder. Each row's action flips
+ * between Install/Uninstall based on current status, mirroring
+ * AgentStatusList's Connect/Disconnect toggle.
  */
 export function TechnicalSkillsList({
   statuses,
