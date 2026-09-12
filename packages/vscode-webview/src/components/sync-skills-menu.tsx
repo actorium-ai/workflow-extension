@@ -20,17 +20,6 @@ interface SyncSkillsMenuProps {
   onUninstall: (target: AgentTarget) => void;
 }
 
-/** Green once every target with resolved skills has them installed, gray if
- * any is still pending — same "done vs. needs action" signal as
- * McpCliStatusRow's status dot. A target with nothing resolved (total: 0)
- * doesn't count against it — there's nothing to sync for that agent. */
-function allSynced(statuses: TechnicalSkillsStatuses): boolean {
-  return TARGETS.every((target) => {
-    const status = statuses[target];
-    return !status || status.total === 0 || status.installed;
-  });
-}
-
 /**
  * Single entry point for syncing this workspace's enabled skills (from
  * workflow-backend's skills registry) into any of the three agents' skills
@@ -52,6 +41,21 @@ export function SyncSkillsMenu({
 }: SyncSkillsMenuProps) {
   const [open, setOpen] = useState(false);
   const [checked, setChecked] = useState<Set<AgentTarget>>(new Set());
+  const busy = installing.size > 0;
+
+  // Auto-close once a sync this popover kicked off finishes — React's
+  // documented "adjust state during render" pattern (comparing against a
+  // state-tracked previous value) rather than an effect, since `busy` is
+  // fully derived from the `installing` prop already and there is nothing
+  // external to synchronize; only the popover's own open/closed state needs
+  // adjusting when that prop settles back to empty.
+  const [wasBusy, setWasBusy] = useState(busy);
+  if (busy !== wasBusy) {
+    setWasBusy(busy);
+    if (wasBusy && !busy && open) {
+      setOpen(false);
+    }
+  }
 
   // Seed the checklist from actual install state right when the popover
   // opens (not via an effect — that would set state synchronously during
@@ -63,8 +67,6 @@ export function SyncSkillsMenu({
     }
     setOpen(next);
   }
-
-  const busy = installing.size > 0;
 
   function toggle(target: AgentTarget) {
     setChecked((prev) => {
@@ -88,7 +90,13 @@ export function SyncSkillsMenu({
         onUninstall(target);
       }
     }
-    setOpen(false);
+    if (!busy) {
+      // Nothing changed (checklist matched actual state already) — no
+      // install/uninstall was kicked off, so the busy-transition auto-close
+      // above will never fire. Close right away instead of leaving the
+      // popover stuck open with an inert Sync button.
+      setOpen(false);
+    }
   }
 
   return (
@@ -96,17 +104,11 @@ export function SyncSkillsMenu({
       title="Sync this workspace's enabled skills into an agent's skills directory"
       className="flex w-full items-center gap-2 rounded-md px-2 py-1.5"
     >
-      <span className="relative shrink-0">
-        <span
-          aria-hidden="true"
-          className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[6px] bg-white"
-        >
-          <GraduationCap className="h-3 w-3 text-black" aria-hidden="true" />
-        </span>
-        <span
-          className={`absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-bg ${allSynced(statuses) ? 'bg-success' : 'bg-text-muted'}`}
-          aria-hidden="true"
-        />
+      <span
+        aria-hidden="true"
+        className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[6px] bg-white"
+      >
+        <GraduationCap className="h-3 w-3 text-black" aria-hidden="true" />
       </span>
       <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">Skills</span>
       <Popover isOpen={open} onOpenChange={handleOpenChange}>
@@ -127,8 +129,9 @@ export function SyncSkillsMenu({
                 <button
                   key={target}
                   type="button"
+                  disabled={busy}
                   onClick={() => toggle(target)}
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-text-secondary hover:bg-surface-secondary hover:text-text-primary"
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-text-secondary hover:bg-surface-secondary hover:text-text-primary disabled:pointer-events-none disabled:opacity-60"
                 >
                   <CliIcon name={target} />
                   <span className="min-w-0 flex-1 truncate">{TARGET_LABELS[target]}</span>
@@ -140,10 +143,12 @@ export function SyncSkillsMenu({
             </div>
             <button
               type="button"
+              disabled={busy}
               onClick={sync}
-              className="flex w-full items-center justify-center px-3 py-2 text-xs font-medium text-accent-foreground hover:bg-primary/10"
+              className="flex w-full items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium text-accent-foreground hover:bg-primary/10 disabled:pointer-events-none disabled:opacity-60"
             >
-              Sync
+              {busy && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden="true" />}
+              {busy ? 'Syncing…' : 'Sync'}
             </button>
           </Popover.Dialog>
         </Popover.Content>
