@@ -117,6 +117,12 @@ export function Navigator() {
                 installing={c.mcpCliInstalling}
                 onInstall={c.installMcpCli}
               />
+              <SyncSkillsMenu
+                statuses={c.technicalSkillsStatuses}
+                installing={c.technicalSkillsInstalling}
+                onInstall={c.installTechnicalSkills}
+                onUninstall={c.uninstallTechnicalSkills}
+              />
               <AgentStatusList
                 statuses={c.mcpStatuses}
                 pendingAgents={c.pendingAgents}
@@ -129,13 +135,6 @@ export function Navigator() {
                   c.accounts.find((a) => a.isActive)?.user.email ||
                   null
                 }
-              />
-              <div className="my-1 border-t border-border" />
-              <SyncSkillsMenu
-                statuses={c.technicalSkillsStatuses}
-                installing={c.technicalSkillsInstalling}
-                onInstall={c.installTechnicalSkills}
-                onUninstall={c.uninstallTechnicalSkills}
               />
             </div>
           </CollapsibleSection>

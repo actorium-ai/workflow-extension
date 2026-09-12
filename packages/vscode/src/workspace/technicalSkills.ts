@@ -138,16 +138,21 @@ async function resolveWorkspaceSkills(
     .map((c) => ({ slug: c.skill.slug, versionId: c.latest_version.id }));
 }
 
-/** GET /api/skills/versions/{versionId}/files — a skill version's full
- * bundle file map (the SAME endpoint the admin Skills page's editor
- * reads), or null on any fetch/parse failure. */
+/** GET /api/workspaces/{workspaceId}/skills/versions/{versionId}/files — a
+ * skill version's full bundle file map, scoped to workspace/org membership
+ * rather than platform-admin (unlike the admin Skills page editor's
+ * GET /api/skills/versions/{versionId}/files, which requires platform_admin
+ * for platform-tier skills and would 403 for an ordinary workspace member
+ * just trying to sync their own resolved skill set locally). Returns null on
+ * any fetch/parse failure. */
 async function fetchSkillFiles(
   config: CodingApiConfig,
+  workspaceId: string,
   versionId: string,
 ): Promise<Record<string, string> | null> {
   const data = await authedJson<{ files: Record<string, string> }>(
     config,
-    `${config.workflowBackendUrl}/api/skills/versions/${encodeURIComponent(versionId)}/files`,
+    `${config.workflowBackendUrl}/api/workspaces/${encodeURIComponent(workspaceId)}/skills/versions/${encodeURIComponent(versionId)}/files`,
   );
   return data?.files ?? null;
 }
@@ -208,7 +213,7 @@ export async function installTechnicalSkills(
 
   let installed = 0;
   for (const { slug, versionId } of skills) {
-    const files = await fetchSkillFiles(config, versionId);
+    const files = await fetchSkillFiles(config, workspaceId, versionId);
     if (!files) continue;
     const skillDir = path.join(dest, slug);
     await fs.rm(skillDir, { recursive: true, force: true });

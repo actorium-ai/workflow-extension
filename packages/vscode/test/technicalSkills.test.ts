@@ -94,6 +94,40 @@ async function run(): Promise<void> {
     ok(!existsSync(join(tempDir, '.claude', 'skills', 'codex-only-skill')));
   }
 
+  // installTechnicalSkills fetches file content via the workspace-scoped
+  // route (readable by any workspace member), never the admin-only
+  // GET /api/skills/versions/:id/files (platform-admin-gated for
+  // platform-tier skills — a regular workspace member syncing their own
+  // resolved skills would get a 403 from that one).
+  {
+    const requestedUrls: string[] = [];
+    const config: CodingApiConfig = {
+      getToken: async () => 'test-token',
+      workflowBackendUrl: 'https://backend.internal',
+      storageServiceUrl: 'https://storage.internal',
+      onUnauthorized: () => {},
+    };
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      requestedUrls.push(String(url));
+      if (String(url).includes('/skill-policies/candidates')) {
+        return jsonResponse(200, candidatesFixture);
+      }
+      if (String(url).includes('/versions/v-py/files')) {
+        return jsonResponse(200, { files: filesFixture['v-py'] });
+      }
+      return new Response('not found', { status: 404 });
+    }) as typeof fetch;
+
+    const result = await installTechnicalSkills(config, workspaceId, tempDir, 'claude');
+    ok(result.ok, result.message);
+    const filesRequest = requestedUrls.find((u) => u.includes('/versions/v-py/files'));
+    ok(filesRequest, 'expected a request for the skill version files');
+    ok(
+      filesRequest!.includes(`/workspaces/${workspaceId}/skills/versions/v-py/files`),
+      `expected the workspace-scoped route, got ${filesRequest}`,
+    );
+  }
+
   // Same candidates for 'codex': codex-only-skill is now compatible and
   // syncs; python-best-practices (executors: []) still syncs too.
   {
