@@ -1,12 +1,4 @@
-import {
-  Blocks,
-  ExternalLink,
-  FolderGit2,
-  FolderOpen,
-  GraduationCap,
-  ListTodo,
-  Plus,
-} from 'lucide-react';
+import { Blocks, ExternalLink, FolderGit2, FolderOpen, ListTodo, Plus } from 'lucide-react';
 
 import { AgentStatusList } from './components/agent-status-list';
 import { AuthPrompt } from './components/auth-prompt';
@@ -15,7 +7,7 @@ import { DocList } from './components/doc-list';
 import { FeatureList } from './components/feature-list';
 import { WorkspacePill } from './components/header';
 import { McpCliStatusRow } from './components/mcp-cli-status';
-import { TechnicalSkillsList } from './components/technical-skills-list';
+import { SyncSkillsMenu } from './components/sync-skills-menu';
 import { UserMenu } from './components/user-menu';
 import { VersionBlocked } from './components/version-blocked';
 import { WorkspaceMenu } from './components/workspace-menu';
@@ -138,15 +130,8 @@ export function Navigator() {
                   null
                 }
               />
-            </div>
-          </CollapsibleSection>
-
-          <CollapsibleSection
-            title="Skills"
-            icon={<GraduationCap className="h-3 w-3 shrink-0" aria-hidden="true" />}
-          >
-            <div className="px-1">
-              <TechnicalSkillsList
+              <div className="my-1 border-t border-border" />
+              <SyncSkillsMenu
                 statuses={c.technicalSkillsStatuses}
                 installing={c.technicalSkillsInstalling}
                 onInstall={c.installTechnicalSkills}

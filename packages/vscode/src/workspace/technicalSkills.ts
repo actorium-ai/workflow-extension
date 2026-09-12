@@ -26,6 +26,30 @@ function workspaceSkillsDir(workspaceFolderPath: string, target: AgentTarget): s
   return path.join(workspaceFolderPath, ...SKILLS_DEST_RELATIVE[target]);
 }
 
+/** Rejects a slug that would let a skill directory escape the skills root —
+ * mirrors agent-workflow's executor-side `isSafeSlug` guard. Workspace/org-
+ * tier skills are user-authored (not platform-admin-gated), so `slug` here
+ * is untrusted input, same as it is for an executor container. */
+function isSafeSlug(slug: string): boolean {
+  return (
+    slug.length > 0 && !slug.includes('/') && !slug.includes('\\') && slug !== '.' && slug !== '..'
+  );
+}
+
+/** Resolves `relPath` under `root` and returns the joined path, or null if
+ * the result would not stay strictly inside `root` (a `..`/absolute entry,
+ * or a key that resolves to `root` itself, e.g. `"."` or an empty string) —
+ * mirrors agent-workflow's executor-side `stageSkillBundle` guard. A skill
+ * bundle's file map keys are untrusted input for the same reason `slug` is. */
+function safeJoin(root: string, relPath: string): string | null {
+  if (relPath.trim() === '') return null;
+  const target = path.join(root, relPath);
+  const rootWithSep = root.endsWith(path.sep) ? root : root + path.sep;
+  if (target !== root && !target.startsWith(rootWithSep)) return null;
+  if (target === root) return null;
+  return target;
+}
+
 // ─── workflow-backend skills-registry response shapes (only the fields
 // this module reads) — see workflow-backend's internal/domain.Skill /
 // SkillVersion / SkillManifest / SkillCandidate. ──────────────────────────
@@ -108,7 +132,8 @@ async function resolveWorkspaceSkills(
         c.enabled &&
         c.skill.active &&
         c.skill.latest_version_id &&
-        isCompatible(c.latest_version.manifest, target),
+        isCompatible(c.latest_version.manifest, target) &&
+        isSafeSlug(c.skill.slug),
     )
     .map((c) => ({ slug: c.skill.slug, versionId: c.latest_version.id }));
 }
@@ -188,7 +213,8 @@ export async function installTechnicalSkills(
     const skillDir = path.join(dest, slug);
     await fs.rm(skillDir, { recursive: true, force: true });
     for (const [relPath, content] of Object.entries(files)) {
-      const filePath = path.join(skillDir, relPath);
+      const filePath = safeJoin(skillDir, relPath);
+      if (!filePath) continue; // refuse a bundle entry that would escape this skill's own directory
       await fs.mkdir(path.dirname(filePath), { recursive: true });
       await fs.writeFile(filePath, content, 'utf8');
     }

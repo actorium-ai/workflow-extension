@@ -145,6 +145,66 @@ async function run(): Promise<void> {
     ok(!result.ok);
   }
 
+  // A skill with an unsafe slug (path traversal) is silently skipped rather
+  // than let its directory escape the skills root — workspace/org-tier
+  // skills are user-authored, not platform-admin-gated, so the slug a
+  // malicious workspace admin puts in the registry is untrusted input.
+  {
+    const evilCandidates = {
+      candidates: [
+        {
+          skill: { slug: '../../evil', active: true, latest_version_id: 'v-evil' },
+          latest_version: { id: 'v-evil', manifest: {} },
+          enabled: true,
+        },
+        {
+          skill: { slug: 'good-skill', active: true, latest_version_id: 'v-good' },
+          latest_version: { id: 'v-good', manifest: {} },
+          enabled: true,
+        },
+      ],
+    };
+    const config = makeConfig({
+      '/skill-policies/candidates': evilCandidates,
+      '/versions/v-evil/files': { files: { 'SKILL.md': 'evil' } },
+      '/versions/v-good/files': { files: { 'SKILL.md': '# good-skill' } },
+    });
+    const result = await installTechnicalSkills(config, workspaceId, tempDir, 'claude');
+    ok(result.ok, result.message);
+    ok(existsSync(join(tempDir, '.claude', 'skills', 'good-skill', 'SKILL.md')));
+    ok(!existsSync(join(tempDir, 'evil')));
+    ok(!existsSync(join(tempDir, '..', 'evil')));
+  }
+
+  // A bundle file-map entry that would escape (or resolve to) the skill's
+  // own directory is skipped, not written — including a bare "." key,
+  // which resolves to the skill directory itself rather than a proper file
+  // inside it.
+  {
+    const config = makeConfig({
+      '/skill-policies/candidates': {
+        candidates: [
+          {
+            skill: { slug: 'traversal-skill', active: true, latest_version_id: 'v-trav' },
+            latest_version: { id: 'v-trav', manifest: {} },
+            enabled: true,
+          },
+        ],
+      },
+      '/versions/v-trav/files': {
+        files: {
+          'SKILL.md': '# traversal-skill',
+          '../../../outside.txt': 'should not be written outside the skill dir',
+          '.': 'should not overwrite the skill dir itself',
+        },
+      },
+    });
+    const result = await installTechnicalSkills(config, workspaceId, tempDir, 'claude');
+    ok(result.ok, result.message);
+    ok(existsSync(join(tempDir, '.claude', 'skills', 'traversal-skill', 'SKILL.md')));
+    ok(!existsSync(join(tempDir, 'outside.txt')));
+  }
+
   console.log('✅ technicalSkills registry-sync tests passed');
 }
 
