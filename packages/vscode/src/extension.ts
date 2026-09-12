@@ -43,7 +43,7 @@ import {
   recordMcpRegistration,
 } from './workspace/mcpRegistrationState.js';
 import { addRepo } from './workspace/repoLinker.js';
-import { readBundledSharedRules, writeWorkflowRules } from './workspace/workflowRules.js';
+import { readBundledSharedRules } from './workspace/workflowRules.js';
 import { writeWorkspaceManifest } from './workspace/workspaceManifest.js';
 import { ensureWorkspaceRulesFile } from './workspace/workspaceRulesFile.js';
 
@@ -91,7 +91,6 @@ async function regenerateAgentsFile(folderPath: string): Promise<void> {
   const sharedRulesMarkdown = await readBundledSharedRules(extContext);
   await writeAgentsFile(folderPath, { ...names, workspaceId }, sharedRulesMarkdown);
   if (orgId) await writeWorkspaceManifest(folderPath, { workspaceId, orgId });
-  await writeWorkflowRules(extContext, folderPath);
   await ensureEnvFile(folderPath);
   await ensureEnvGitignored(folderPath);
   await ensureWorkspaceRulesFile(folderPath);

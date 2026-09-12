@@ -110,12 +110,12 @@ export interface McpCliStatus {
   updateAvailable: boolean;
 }
 
-/** Whether the bundled Technical Skills (workflow-extension's own
- * skills/technical_skills — see the extension host's src/workspace/
+/** Whether this workspace's enabled skills (synced from workflow-backend's
+ * skills registry — see the extension host's src/workspace/
  * technicalSkills.ts) are copied into this workspace folder's
  * target-specific skills directory (.claude/skills, .codex/skills, or
  * .opencode/skills). `installed` is false for a partial install (some but
- * not all copied), since "Install" always re-copies the full set anyway. */
+ * not all synced), since "Install" always re-syncs the full set anyway. */
 export interface TechnicalSkillsStatus {
   installed: boolean;
   total: number;

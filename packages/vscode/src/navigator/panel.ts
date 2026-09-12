@@ -875,31 +875,46 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
       : undefined;
   }
 
-  /** Checks how many of the bundled technical skills are already copied
-   * into this workspace folder's target-specific skills directory (see
-   * technicalSkills.ts) — drives the Skills section's per-agent row. */
+  /** Checks how many of this workspace's registry-resolved skills are
+   * already synced into this workspace folder's target-specific skills
+   * directory (see technicalSkills.ts) — drives the Skills section's
+   * per-agent row. */
   private async _loadTechnicalSkillsStatus(target: AgentTarget): Promise<void> {
+    const workspaceId = this.getWorkspaceId();
     const folder = this.currentWorkspaceFolder();
-    const status = folder
-      ? await getTechnicalSkillsStatus(this.context, folder, target)
-      : { installed: false, total: 0 };
+    const status =
+      workspaceId && folder
+        ? await getTechnicalSkillsStatus(
+            codingApiConfig(this.codingApiCtx),
+            workspaceId,
+            folder,
+            target,
+          )
+        : { installed: false, total: 0 };
     this._postMessage({ command: 'technicalSkillsStatusLoaded', target, status });
   }
 
-  /** Copies every bundled technical skill into this workspace folder's
+  /** Fetches every skill this workspace resolves from workflow-backend's
+   * skills registry and writes them into this workspace folder's
    * target-specific skills directory (see technicalSkills.ts) — requires a
    * linked workspace folder since, unlike the actorium-mcp CLI, these
    * skills are written into the workspace itself rather than installed
    * globally. */
   private async _installTechnicalSkills(target: AgentTarget): Promise<void> {
+    const workspaceId = this.getWorkspaceId();
     const folder = this.currentWorkspaceFolder();
-    if (!folder) {
+    if (!workspaceId || !folder) {
       vscode.window.showWarningMessage('Actorium: Link a workspace folder first.');
       this._postMessage({ command: 'technicalSkillsInstallDone', target });
       return;
     }
 
-    const result = await installTechnicalSkills(this.context, folder, target);
+    const result = await installTechnicalSkills(
+      codingApiConfig(this.codingApiCtx),
+      workspaceId,
+      folder,
+      target,
+    );
     if (result.ok) {
       vscode.window.showInformationMessage(`Actorium: ${result.message}`);
     } else {
@@ -909,7 +924,7 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
     await this._loadTechnicalSkillsStatus(target);
   }
 
-  /** Removes every bundled technical skill from this workspace folder's
+  /** Removes every synced technical skill from this workspace folder's
    * target-specific skills directory (see technicalSkills.ts) — the Skills
    * section's "Uninstall" action once a target is fully installed. */
   private async _uninstallTechnicalSkills(target: AgentTarget): Promise<void> {
@@ -920,7 +935,7 @@ export class NavigatorPanelProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    const result = await uninstallTechnicalSkills(this.context, folder, target);
+    const result = await uninstallTechnicalSkills(folder, target);
     if (result.ok) {
       vscode.window.showInformationMessage(`Actorium: ${result.message}`);
     } else {
