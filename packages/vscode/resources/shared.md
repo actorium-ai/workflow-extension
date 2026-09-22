@@ -71,6 +71,14 @@ A feature starts in `backlog` and moves to `in_design` when work begins. `backlo
   - `blocked_reason` (when blocked)
   - `pr` (url, status)
 
+## tasks.md document format
+
+`tasks.md` has two required parts: an `## Index` table, and one `## T<n> — <title>` body section per Index row.
+
+- The Index table header must include five required columns — `| ID | Title | Repo | Depends On | Actor |` — plus two optional columns, `Model` (agent-actor tasks' implementation-phase model) and `Human Review`. Column order is flexible; extra columns are ignored.
+- Every Index row's `ID` must have exactly one matching `## T<n> — <title>` body section below it. `write_tasks` and `edit_document(document='tasks')` reject the write otherwise — a row with no matching section still passes the Index table's own internal checks but leaves the task unrunnable: the executor can't find its assigned section, and the task blocks at run-task time (`blocked_reason: missing_task_section`).
+- Each `## T<n>` section may carry a `### Required skills` subsection (see **Per-task required skills**) and a `### Subtasks` checklist — checklist items only, since subtasks have no lifecycle status of their own (see **Task structure rules** above).
+
 ## Task status transition rules
 
 Valid transitions only — skipping a step is a rule violation:
