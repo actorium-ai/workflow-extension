@@ -9,12 +9,14 @@ Features follow this lifecycle:
 - in_tdd
 - ready_for_implementation
 - in_implementation
+- preparing_handoff
 - in_handoff
 - done
 - blocked
+- handoff_blocked
 - cancelled
 
-A feature starts in `backlog` and moves to `in_design` when work begins. `backlog` can also cancel directly to `cancelled`.
+A feature starts in `backlog` and moves to `in_design` when work begins. `backlog` can also cancel directly to `cancelled`. `preparing_handoff` means all tasks are terminal and the system is preparing the handoff PRs; `in_handoff` means the PRs are ready for a human to review; `handoff_blocked` means preparing the handoff failed and a human must retry it.
 
 ![Feature Lifecycle Workflow](docs/feature-workflow.png)
 

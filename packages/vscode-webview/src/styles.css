@@ -23,6 +23,10 @@
   --color-success: var(--vscode-charts-green, #3fb950);
   --color-warning: var(--vscode-charts-orange, #d29922);
   --color-purple: var(--vscode-charts-purple, #a371f7);
+  /* Teal: the system is preparing the handoff. No VS Code chart-color token
+     for teal exists, so this is a fixed hex, same rationale as
+     --color-purple-light below (web app equivalent: --color-preparing). */
+  --color-preparing: #4fb8a8;
   /* Lighter chip/link text on a bg-purple/15 tint — bg-purple text-purple has
      too little value separation on a dark VS Code theme. No matching vscode-*
      token exists for this (same reasoning as chip-bg/chip-fg below, which are

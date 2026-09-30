@@ -10,7 +10,13 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 
 import { LifecycleGlyph, StatusPill, TaskStatusGlyph } from './components/status-glyph.tsx';
-import { lifecycleMeta, STATUS_ORDER, tint } from './utils/feature-meta.ts';
+import {
+  boardColumnFor,
+  lifecycleMeta,
+  STATUS_ORDER,
+  statusSortIndex,
+  tint,
+} from './utils/feature-meta.ts';
 import type { FeatureSummary, TaskSummary } from './utils/types.ts';
 import { getVsCodeApi } from './utils/vscode-api.ts';
 
@@ -37,6 +43,7 @@ const LIST_FILTERS: { key: string; label: string; glyphStatus: string; color: st
 const GRID_FILTERS: { key: string; stage: string }[] = [
   { key: 'ready_for_implementation', stage: 'ready_for_implementation' },
   { key: 'in_implementation', stage: 'in_implementation' },
+  { key: 'preparing_handoff', stage: 'preparing_handoff' },
   { key: 'in_handoff', stage: 'in_handoff' },
 ];
 
@@ -62,26 +69,48 @@ function matchesListChips(feature: FeatureSummary, chips: Set<string>): boolean 
 }
 
 /** Grid mode: is this feature currently in one of the checked lifecycle
- * stages? */
+ * stages? handoff_blocked counts as preparing_handoff, since that's the
+ * column it renders in. */
 function matchesGridChips(feature: FeatureSummary, chips: Set<string>): boolean {
   if (chips.size === 0) return true;
-  return chips.has(feature.status);
+  return chips.has(boardColumnFor(feature.status));
 }
 
 /** Every feature grouped by lifecycle status, in the SAME fixed canonical
- * order and full 8-status set as digital-factory-ui's own Features page —
- * including statuses with zero matching features, so a currently-empty
- * stage (e.g. "Ready for Impl.") still renders its own empty column/section
- * instead of silently disappearing. */
+ * order as digital-factory-ui's own Features page — including statuses with
+ * zero matching features, so a currently-empty stage (e.g. "Ready for
+ * Impl.") still renders its own empty section instead of silently
+ * disappearing. handoff_blocked is the one exception: it renders only while
+ * a feature is actually blocked (it has no column of its own on the board,
+ * see FeatureGridView's groupByColumn below), so an empty group for it is
+ * skipped rather than always shown. */
 function groupByStatus(features: FeatureSummary[]): [string, FeatureSummary[]][] {
   const byStatus = new Map<string, FeatureSummary[]>();
-  for (const status of STATUS_ORDER) byStatus.set(status, []);
+  for (const status of STATUS_ORDER) if (status !== 'handoff_blocked') byStatus.set(status, []);
   for (const f of features) {
     const list = byStatus.get(f.status) ?? [];
     list.push(f);
     byStatus.set(f.status, list);
   }
-  return Array.from(byStatus.entries());
+  // handoff_blocked, when present, was inserted last (get() missed the seeded
+  // entries above) — restore canonical order.
+  return Array.from(byStatus.entries()).sort(([a], [b]) => statusSortIndex(a) - statusSortIndex(b));
+}
+
+/** Grid (kanban) view grouping: same statuses as groupByStatus, but
+ * handoff_blocked features are folded into the preparing_handoff column
+ * instead of getting an always-visible column of their own (spec: no
+ * HANDOFF BLOCKED column). */
+function groupByColumn(features: FeatureSummary[]): [string, FeatureSummary[]][] {
+  const byColumn = new Map<string, FeatureSummary[]>();
+  for (const status of STATUS_ORDER) if (status !== 'handoff_blocked') byColumn.set(status, []);
+  for (const f of features) {
+    const col = boardColumnFor(f.status);
+    const list = byColumn.get(col) ?? [];
+    list.push(f);
+    byColumn.set(col, list);
+  }
+  return Array.from(byColumn.entries());
 }
 
 /** Green fill at 100%, matching digital-factory-ui's feature-list-view.tsx
@@ -427,7 +456,7 @@ function FeatureGridView({
   onCheckoutHandoffPRs: (feature: FeatureSummary) => void;
   checkingOutFeatures: Set<string>;
 }) {
-  const columns = useMemo(() => groupByStatus(features), [features]);
+  const columns = useMemo(() => groupByColumn(features), [features]);
 
   return (
     <div className="flex h-full gap-3 overflow-x-auto">
@@ -474,10 +503,12 @@ function FeatureGridView({
  * (kanban) view toggle. Opened via the sidebar Features section's "Open all"
  * action (see FeaturesBrowserPanel). Mirrors digital-factory-ui's own
  * Features page — read-only, like the rest of this extension, so there's no
- * "New Feature" action here. Both views always show all 8 canonical
- * lifecycle stages (even ones with no current features), matching
- * digital-factory-ui's board; the List view's per-feature rows expand to
- * reveal that feature's tasks (T1/T2/…), sourced from the same
+ * "New Feature" action here. Both views always show all canonical lifecycle
+ * stages except handoff_blocked (even ones with no current features),
+ * matching digital-factory-ui's board; handoff_blocked has no column/section
+ * of its own and appears only while a feature is actually blocked, folded
+ * into preparing_handoff in the grid view. The List view's per-feature rows
+ * expand to reveal that feature's tasks (T1/T2/…), sourced from the same
  * workspace-detail fetch (no extra request).
  */
 export function FeaturesBrowser() {

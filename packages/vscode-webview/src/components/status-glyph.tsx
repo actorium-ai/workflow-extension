@@ -6,6 +6,7 @@ import {
   CircleDashed,
   CircleDot,
   CircleDotDashed,
+  CircleEllipsis,
   CircleMinus,
   CircleX,
   RotateCcw,
@@ -65,11 +66,11 @@ function CirclePen({ size, color }: { size: number; color: string }) {
 
 /** Feature lifecycle-stage glyph — same stage -> icon mapping as
  * digital-factory-ui's board/status-glyph.tsx LifecycleIcon (backlog,
- * ready_for_implementation, in_implementation, in_handoff, done, blocked,
- * cancelled use stock lucide icons there too; in_design/in_tdd use the two
- * custom SVGs above, ported verbatim rather than approximated with a stock
- * icon — the two apps must show the exact same glyph for the exact same
- * stage). */
+ * ready_for_implementation, in_implementation, preparing_handoff,
+ * handoff_blocked, in_handoff, done, blocked, cancelled use stock lucide
+ * icons there too; in_design/in_tdd use the two custom SVGs above, ported
+ * verbatim rather than approximated with a stock icon — the two apps must
+ * show the exact same glyph for the exact same stage). */
 export function LifecycleGlyph({ stage, size = 12 }: { stage: string; size?: number }) {
   const meta = lifecycleMeta(stage);
   const props = { size, color: meta.color, 'aria-hidden': true } as const;
@@ -78,6 +79,8 @@ export function LifecycleGlyph({ stage, size = 12 }: { stage: string; size?: num
   else if (stage === 'in_tdd') icon = <CircleFlask size={size} color={meta.color} />;
   else if (stage === 'ready_for_implementation') icon = <CircleArrowRight {...props} />;
   else if (stage === 'in_implementation') icon = <CircleDashed {...props} />;
+  else if (stage === 'preparing_handoff') icon = <CircleEllipsis {...props} />;
+  else if (stage === 'handoff_blocked') icon = <CircleX {...props} />;
   else if (stage === 'in_handoff') icon = <CircleDot {...props} />;
   else if (stage === 'done') icon = <CheckCircle2 {...props} />;
   else if (stage === 'blocked') icon = <CircleX {...props} />;
