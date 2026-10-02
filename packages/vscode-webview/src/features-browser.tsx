@@ -13,6 +13,7 @@ import { LifecycleGlyph, StatusPill, TaskStatusGlyph } from './components/status
 import {
   boardColumnFor,
   lifecycleMeta,
+  NO_COLUMN_STATUSES,
   STATUS_ORDER,
   statusSortIndex,
   tint,
@@ -45,6 +46,7 @@ const GRID_FILTERS: { key: string; stage: string }[] = [
   { key: 'in_implementation', stage: 'in_implementation' },
   { key: 'preparing_handoff', stage: 'preparing_handoff' },
   { key: 'in_handoff', stage: 'in_handoff' },
+  { key: 'in_finalization', stage: 'in_finalization' },
 ];
 
 function matchesQuery(feature: FeatureSummary, query: string): boolean {
@@ -86,13 +88,13 @@ function matchesGridChips(feature: FeatureSummary, chips: Set<string>): boolean 
  * skipped rather than always shown. */
 function groupByStatus(features: FeatureSummary[]): [string, FeatureSummary[]][] {
   const byStatus = new Map<string, FeatureSummary[]>();
-  for (const status of STATUS_ORDER) if (status !== 'handoff_blocked') byStatus.set(status, []);
+  for (const status of STATUS_ORDER) if (!NO_COLUMN_STATUSES.has(status)) byStatus.set(status, []);
   for (const f of features) {
     const list = byStatus.get(f.status) ?? [];
     list.push(f);
     byStatus.set(f.status, list);
   }
-  // handoff_blocked, when present, was inserted last (get() missed the seeded
+  // blocked statuses, when present, were inserted last (get() missed the seeded
   // entries above) — restore canonical order.
   return Array.from(byStatus.entries()).sort(([a], [b]) => statusSortIndex(a) - statusSortIndex(b));
 }
@@ -103,7 +105,7 @@ function groupByStatus(features: FeatureSummary[]): [string, FeatureSummary[]][]
  * HANDOFF BLOCKED column). */
 function groupByColumn(features: FeatureSummary[]): [string, FeatureSummary[]][] {
   const byColumn = new Map<string, FeatureSummary[]>();
-  for (const status of STATUS_ORDER) if (status !== 'handoff_blocked') byColumn.set(status, []);
+  for (const status of STATUS_ORDER) if (!NO_COLUMN_STATUSES.has(status)) byColumn.set(status, []);
   for (const f of features) {
     const col = boardColumnFor(f.status);
     const list = byColumn.get(col) ?? [];
