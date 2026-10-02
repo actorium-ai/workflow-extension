@@ -64,6 +64,27 @@ function CirclePen({ size, color }: { size: number; color: string }) {
   );
 }
 
+/** Flag inside a circle — the finish line, for "Finalizing". */
+function CircleFlag({ size, color }: { size: number; color: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke={color}
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="10" />
+      <path d="M9 17V7" />
+      <path d="M9 7.5h6l-1.5 2.25L15 12H9" />
+    </svg>
+  );
+}
+
 /** Feature lifecycle-stage glyph — same stage -> icon mapping as
  * digital-factory-ui's board/status-glyph.tsx LifecycleIcon (backlog,
  * ready_for_implementation, in_implementation, preparing_handoff,
@@ -81,6 +102,8 @@ export function LifecycleGlyph({ stage, size = 12 }: { stage: string; size?: num
   else if (stage === 'in_implementation') icon = <CircleDashed {...props} />;
   else if (stage === 'preparing_handoff') icon = <CircleEllipsis {...props} />;
   else if (stage === 'handoff_blocked') icon = <CircleX {...props} />;
+  else if (stage === 'in_finalization') icon = <CircleFlag size={size} color={meta.color} />;
+  else if (stage === 'finalization_blocked') icon = <CircleX {...props} />;
   else if (stage === 'in_handoff') icon = <CircleDot {...props} />;
   else if (stage === 'done') icon = <CheckCircle2 {...props} />;
   else if (stage === 'blocked') icon = <CircleX {...props} />;

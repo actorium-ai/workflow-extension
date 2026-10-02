@@ -15,6 +15,8 @@ export const FEATURE_LIFECYCLE_META: Record<string, { label: string; color: stri
   preparing_handoff: { label: 'Preparing Handoff', color: 'var(--color-preparing)' },
   handoff_blocked: { label: 'Handoff Blocked', color: 'var(--color-danger)' },
   in_handoff: { label: 'In Handoff', color: 'var(--color-warning)' },
+  in_finalization: { label: 'Finalizing', color: 'var(--color-finalizing)' },
+  finalization_blocked: { label: 'Finalization Blocked', color: 'var(--color-danger)' },
   done: { label: 'Done', color: 'var(--color-success)' },
   blocked: { label: 'Blocked', color: 'var(--color-danger)' },
   cancelled: { label: 'Cancelled', color: 'var(--color-text-muted)' },
@@ -29,6 +31,8 @@ export function lifecycleMeta(status: string) {
 export const STATUS_ORDER = [
   'backlog',
   'blocked',
+  'finalization_blocked',
+  'in_finalization',
   'in_handoff',
   'handoff_blocked',
   'preparing_handoff',
@@ -45,11 +49,16 @@ export function statusSortIndex(status: string): number {
   return i === -1 ? STATUS_ORDER.length - 2 : i;
 }
 
-/** handoff_blocked has no grid column of its own: its cards sit in the
- * preparing_handoff column, told apart by their red "Handoff Blocked" badge
- * (see digital-factory-ui's board-meta.ts boardColumnFor). */
+/** Blocked statuses have no grid column of their own: handoff_blocked cards
+ * sit in the preparing_handoff column and finalization_blocked cards in the
+ * in_finalization column, told apart by their red badge (see
+ * digital-factory-ui's board-meta.ts boardColumnFor). */
+export const NO_COLUMN_STATUSES = new Set(['handoff_blocked', 'finalization_blocked']);
+
 export function boardColumnFor(status: string): string {
-  return status === 'handoff_blocked' ? 'preparing_handoff' : status;
+  if (status === 'handoff_blocked') return 'preparing_handoff';
+  if (status === 'finalization_blocked') return 'in_finalization';
+  return status;
 }
 
 const TASK_STATUS_META: Record<string, { label: string; color: string }> = {

@@ -27,6 +27,10 @@
      for teal exists, so this is a fixed hex, same rationale as
      --color-purple-light below (web app equivalent: --color-preparing). */
   --color-preparing: #4fb8a8;
+  /* Orchid: the system is finishing the feature. Fixed hex (no VS Code chart
+     token), oklch(0.78 0.12 330) converted to sRGB; web app equivalent:
+     --color-finalizing. */
+  --color-finalizing: #e39bdc;
   /* Lighter chip/link text on a bg-purple/15 tint — bg-purple text-purple has
      too little value separation on a dark VS Code theme. No matching vscode-*
      token exists for this (same reasoning as chip-bg/chip-fg below, which are

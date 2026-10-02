@@ -16,6 +16,21 @@ describe('LifecycleGlyph', () => {
     expect(alsoBlocked.querySelector('svg.lucide-circle-x')).not.toBeNull();
   });
 
+  it('renders the custom flag glyph for in_finalization, in the finalizing colour', () => {
+    const { container } = render(<LifecycleGlyph stage="in_finalization" />);
+    const svg = container.querySelector('span[title="Finalizing"] svg');
+    expect(svg).not.toBeNull();
+    expect(svg?.getAttribute('stroke')).toBe('var(--color-finalizing)');
+    expect(svg?.querySelectorAll('path')).toHaveLength(2);
+  });
+
+  it('renders the circle-x icon for finalization_blocked', () => {
+    const { container } = render(<LifecycleGlyph stage="finalization_blocked" />);
+    expect(
+      container.querySelector('span[title="Finalization Blocked"] svg.lucide-circle-x'),
+    ).not.toBeNull();
+  });
+
   it('titles the glyph with the status label so it is inspectable in the UI', () => {
     const { container } = render(<LifecycleGlyph stage="preparing_handoff" />);
     const span = container.querySelector('span[title="Preparing Handoff"]');
