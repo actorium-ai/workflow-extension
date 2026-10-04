@@ -62,6 +62,23 @@ describe('FeaturesBrowser grid view', () => {
     expect(within(column as HTMLElement).getByText('Handoff Blocked')).toBeTruthy();
   });
 
+  it('folds finalization_blocked cards into the Finalizing column', () => {
+    render(<FeaturesBrowser />);
+    loadFeatures([
+      feature({ id: 'fb-1', feature_name: 'fin-blocked-feature', status: 'finalization_blocked' }),
+    ]);
+    switchToGridView();
+
+    const headers = Array.from(
+      document.querySelectorAll('.flex.w-64 > .flex.items-center.gap-2.px-1'),
+    );
+    const header = headers.find((h) => h.textContent?.includes('Finalizing'));
+    const column = header?.closest('div.flex.w-64');
+    expect(column).not.toBeNull();
+    expect(within(column as HTMLElement).getByText('fin-blocked-feature')).toBeTruthy();
+    expect(within(column as HTMLElement).getByText('Finalization Blocked')).toBeTruthy();
+  });
+
   it('includes handoff_blocked cards when the preparing_handoff chip is active', () => {
     render(<FeaturesBrowser />);
     loadFeatures([
