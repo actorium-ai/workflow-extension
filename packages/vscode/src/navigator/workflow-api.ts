@@ -208,9 +208,9 @@ export async function getTaskDiffContent(
   return body.data;
 }
 
-/** GET /api/workspaces/{wid}/features/{featureId}/handoff — a go-owned
- * feature's handoff PR table (repo/status/conflict-state per repo). 404s
- * when the feature isn't go-owned or has no handoff row yet. */
+/** GET /api/workspaces/{wid}/features/{featureId}/handoff — a feature's
+ * handoff PR table (repo/status/conflict-state per repo). 404s when the
+ * feature doesn't exist or has no handoff row yet. */
 export async function getFeatureHandoff(
   config: CodingApiConfig,
   workspaceId: string,

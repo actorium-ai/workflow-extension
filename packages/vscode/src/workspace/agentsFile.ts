@@ -82,10 +82,10 @@ It's **read-only** — no tool here mutates anything, so it's always safe to cal
 - \`get_task({ task_id })\` — full task detail: execution info, both PR refs, activity, deps.
 - \`get_task_diff({ task_id, repo? })\` / \`get_task_review_thread({ task_id, repo? })\`
   — a task's PR file list + diff, or its reviews/comments merged chronologically.
-- \`get_feature_handoff({ feature_id })\` — a go-owned feature's multi-repo handoff state.
+- \`get_feature_handoff({ feature_id })\` — a feature's multi-repo handoff state.
 - \`list_workspace_activity({ feature_id?, task_id?, audience? })\` — the audit/activity feed.
 - \`list_workspace_repos()\` — every repo registered in this workspace.
-- \`read_storage_document({ feature_id, kind })\` — a go-owned feature's product_spec /
+- \`read_storage_document({ feature_id, kind })\` — a feature's product_spec /
   technical_design / tasks / handoff doc content.
 - \`list_workspace_documents({ feature_id? })\` / \`get_document_versions({ document_id })\`
   — document metadata / edit history (no content — use \`read_storage_document\` for that).
