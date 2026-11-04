@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 
-export type ActoriumEnvironment = 'production' | 'local' | 'sw' | 'abp';
+export type ActoriumEnvironment = 'production' | 'local' | 'sw';
 
 export interface EnvironmentDefaults {
   bffUrl: string;
@@ -17,11 +17,6 @@ export const ENVIRONMENTS: Record<ActoriumEnvironment, EnvironmentDefaults> = {
     bffUrl: 'https://api.actorium.ai',
     frontendUrl: 'https://app.actorium.ai',
     clientId: 'actorium-vscode',
-  },
-  abp: {
-    bffUrl: 'https://workflow-backend-api.abp.vn',
-    frontendUrl: 'https://workflow.abp.vn',
-    clientId: 'actorium-vscode-abp',
   },
   sw: {
     bffUrl: 'https://workflow-backend-api.int.tempestdev.xyz',
