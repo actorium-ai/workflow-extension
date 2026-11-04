@@ -24,8 +24,8 @@ export const ENVIRONMENTS: Record<ActoriumEnvironment, EnvironmentDefaults> = {
     clientId: 'actorium-vscode-abp',
   },
   sw: {
-    bffUrl: 'https://workflow-backend-api.tempestdev.xyz',
-    frontendUrl: 'https://workflow.tempestdev.xyz',
+    bffUrl: 'https://workflow-backend-api.int.tempestdev.xyz',
+    frontendUrl: 'https://workflow.int.tempestdev.xyz',
     clientId: 'actorium-vscode-sw',
   },
   local: {
